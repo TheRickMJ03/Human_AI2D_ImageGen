@@ -1,0 +1,1 @@
+Basic web-based image generation interface that runs locally. Users can type in prompts to generate images using an API of your choice, and view a history of past generations.

@@ -1,0 +1,143 @@
+:root {
+  --bg-color: #000000; 
+  --text-color: #ffffff; 
+  --secondary-text: #aaaaaa; 
+}
+
+.App {
+  text-align: center;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  min-height: 100vh;
+  padding: 2rem;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Title styles */
+.title-container {
+  text-align: center;
+  margin: 2rem 0;
+  transition: all 0.5s ease;
+}
+
+.main-title {
+  font-size: 3rem;
+  color: #fff;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.subtitle {
+  font-size: 1.2rem;
+  color: #aaa;
+}
+
+/* Animation classes */
+.fade-in {
+  animation: fadeIn 1s ease-in forwards;
+}
+
+@keyframes fadeIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(-20px);
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0);
+  }
+}
+
+.fade-out {
+  animation: fadeOut 0.5s ease-out forwards;
+}
+
+@keyframes fadeOut {
+  from { 
+    opacity: 1; 
+    transform: translateY(0);
+  }
+  to { 
+    opacity: 0; 
+    transform: translateY(-20px);
+    height: 0;
+    margin: 0;
+    overflow: hidden;
+  }
+}
+
+.content-container {
+  width: 100%;
+  max-width: 1200px;
+  transition: all 0.5s ease;
+}
+
+.image-gen-animate {
+  animation: slideUp 0.5s ease-out forwards;
+}
+
+.input-tape-animate {
+  animation: pushDown 0.5s ease-out forwards;
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0; 
+    transform: translateY(50px);
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0);
+  }
+}
+
+@keyframes pushDown {
+  from { 
+    transform: translateY(0);
+  }
+  to { 
+    transform: translateY(20px);
+  }
+}
+
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
