@@ -12,6 +12,14 @@ Human_AI2D_ImageGen is a locally-hosted web application that enables users to ge
 
 The application provides a complete workflow for image generation, including prompt input, real-time generation status, image display, and a persistent gallery of previously generated images stored locally.
 
+## Demo
+
+
+https://github.com/user-attachments/assets/c1fc3244-fd5f-40fc-9078-672eeb87be24
+
+
+
+
 ## Features
 
 ### Core Capabilities
