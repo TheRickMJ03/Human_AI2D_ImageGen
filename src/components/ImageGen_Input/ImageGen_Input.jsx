@@ -10,13 +10,11 @@ const ImageGenerator = ({ onGenerate }) => {
   const debouncedGenerate = useCallback(async (prompt) => {
     if (!prompt.trim()) return;
     
-    setIsGenerating(true);
     setSubmittedPrompt(prompt);
     
     try {
       await onGenerate(prompt);
     } finally {
-      setIsGenerating(false);
     }
   }, [onGenerate]);
 
@@ -40,6 +38,7 @@ const ImageGenerator = ({ onGenerate }) => {
           <ImageGen 
             prompt={submittedPrompt}
             isGenerating={isGenerating}
+ 
           />
         )}
       </div>
