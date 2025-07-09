@@ -1,143 +1,83 @@
 :root {
-  --bg-color: #000000; 
-  --text-color: #ffffff; 
-  --secondary-text: #aaaaaa; 
-}
-
-.App {
-  text-align: center;
+  --bg-color: #000000;
+  --text-color: #ffffff;
+  --secondary-text: #aaaaaa;
 }
 
 .app {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
-  min-height: 100vh;
-  padding: 2rem;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden; 
 }
 
 /* Title styles */
 .title-container {
+  position: relative; 
   text-align: center;
-  margin: 2rem 0;
-  transition: all 0.5s ease;
+  z-index: 10;
+  width: 100%;
+  padding: 2rem 0; 
+  margin-bottom: 2rem;
+  background-color: var(--bg-color);
 }
 
 .main-title {
   font-size: 3rem;
-  color: #fff;
+  color: var(--text-color);
   margin-bottom: 0.5rem;
   text-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
 .subtitle {
   font-size: 1.2rem;
-  color: #aaa;
+  color: var(--secondary-text);
+    margin-top: 1rem;
 }
 
-/* Animation classes */
-.fade-in {
-  animation: fadeIn 1s ease-in forwards;
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: #888 transparent;
+  padding: 2rem;
+  box-sizing: border-box;
+  padding-bottom: 0px;
+  position: relative; 
+  min-height: 100vh;
 }
 
-@keyframes fadeIn {
-  from { 
-    opacity: 0; 
-    transform: translateY(-20px);
-  }
-  to { 
-    opacity: 1; 
-    transform: translateY(0);
-  }
+/* Custom scrollbar for WebKit browsers */
+.main-content::-webkit-scrollbar {
+  width: 6px;
 }
 
-.fade-out {
-  animation: fadeOut 0.5s ease-out forwards;
+.main-content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-@keyframes fadeOut {
-  from { 
-    opacity: 1; 
-    transform: translateY(0);
-  }
-  to { 
-    opacity: 0; 
-    transform: translateY(-20px);
-    height: 0;
-    margin: 0;
-    overflow: hidden;
-  }
+.main-content::-webkit-scrollbar-thumb {
+  background-color: #888;
+  border-radius: 3px;
 }
 
+/* Content container adjustments */
 .content-container {
   width: 100%;
   max-width: 1200px;
+  margin: 0 auto;
   transition: all 0.5s ease;
 }
 
-.image-gen-animate {
-  animation: slideUp 0.5s ease-out forwards;
+/* When title disappears */
+.content-expand {
+  margin-top: 0rem;
+  height: auto;
 }
 
-.input-tape-animate {
-  animation: pushDown 0.5s ease-out forwards;
-}
-
-@keyframes slideUp {
-  from { 
-    opacity: 0; 
-    transform: translateY(50px);
-  }
-  to { 
-    opacity: 1; 
-    transform: translateY(0);
-  }
-}
-
-@keyframes pushDown {
-  from { 
-    transform: translateY(0);
-  }
-  to { 
-    transform: translateY(20px);
-  }
-}
-
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
-}
-
-.App-link {
-  color: #61dafb;
-}
-
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* Input area specific adjustments */
+.input-area {
+  margin-top: 5rem;
 }

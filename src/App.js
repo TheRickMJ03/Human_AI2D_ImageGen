@@ -5,7 +5,6 @@ import { io } from "socket.io-client";
 
 // Components
 import ImageGenerator from './components/ImageGen_Input/ImageGen_Input';
-import ImageGen from './components/ImageGen/ImageGen';
 import Thumbnails from './components/Thumbnails/Thumbnails';
 
 // Assets
@@ -157,9 +156,11 @@ function App() {
        
         result = await imagenResponse.json();
         
-        setCurrentImage(result);
 
         break;
+
+
+
 
       case 'huggingface':
         const hfModel = HF_MODELS[selectedModel.model];
@@ -207,33 +208,35 @@ function App() {
       </NavItem>
   </Navbar>
 
-      <div className="app">
+     
+    <div className="app">
+      <div className="main-content"> {}
         {showTitle && (
-          <div className="title-container fade-in">
-            <h1 className="main-title">Human_AI2D_ImageGen</h1>
-            <p className="subtitle">By Ricardo Mejia</p>
-          </div>
+          <CSSTransition
+            in={showTitle}
+            timeout={300}
+            classNames="fade"
+            unmountOnExit
+          >
+            <div className="title-container">
+              <h1 className="main-title">Human_AI2D_ImageGen</h1>
+              <p className="subtitle">By Ricardo Mejia</p>
+            </div>
+          </CSSTransition>
         )}
         
         <div className={`content-container ${!showTitle ? 'content-expand' : ''}`}>
-          {!showTitle && (
-            <div className={isAnimating ? "image-gen-animate" : ""}>
-              <ImageGen 
-                isGenerating={isGenerating} 
-                currentImage={currentImage} 
-                selectedModel={selectedModel}
-              />
-            </div>
-          )}
-
-          <div className={isAnimating ? "input-tape-animate" : ""}>
-            <ImageGenerator onGenerate={handleGenerate} selectedModel={selectedModel} />
-          </div>
-
+          <ImageGenerator 
+            onGenerate={handleGenerate} 
+            selectedModel={selectedModel} 
+            currentImage={currentImage}
+            isGenerating={isGenerating}
+          />
           <Thumbnails images={images} loading={loading} isGallery={false} />
         </div>
       </div>
-    </>
+    </div>
+  </>
   );
 }
 
@@ -325,7 +328,7 @@ function DropdownMenu({ onModelSelect, selectedModel, closeMenu  }) {
 
    const handleModelClick = (provider, model) => {
     onModelSelect(provider, model);
-    closeMenu(); // Close the menu when a model is selected
+    closeMenu(); 
   };
 
   return (

@@ -1,59 +1,78 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { InputCase } from '../Input/MessageSoftGPT';
-import ImageGen from '../ImageGen/ImageGen';
+import ChatHistory from '../ChatHistory/Chathistory';
+import './ImageGen_Input.css';
 
-const ImageGenerator = ({ onGenerate }) => {
-  const [prompt, setPrompt] = useState('');
-  const [submittedPrompt, setSubmittedPrompt] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
+const ImageGenerator = ({ onGenerate, isGenerating, currentImage }) => {
+const [prompt, setPrompt] = useState('');
+  const [messages, setMessages] = useState([]); 
+  const chatHistoryRef = useRef(null);
 
-  const debouncedGenerate = useCallback(async (prompt) => {
+      useEffect(() => {
+    sessionStorage.removeItem('chatMessages');
+    setMessages([]);
+  }, []);
+
+  useEffect(() => {
+    if (currentImage) {
+      const newImageMessage = {
+        role: 'assistant',
+        type: 'image',
+        content: currentImage.url,
+        prompt: currentImage.prompt, 
+        timestamp: currentImage.timestamp,
+      };
+      setMessages(prev => [...prev, newImageMessage]);
+    }
+  }, [currentImage]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     if (!prompt.trim()) return;
-    
-    setSubmittedPrompt(prompt);
-    
+
+    const newUserMessage = {
+      role: 'user',
+      type: 'text',
+      content: prompt,
+    };
+    setMessages(prev => [...prev, newUserMessage]);
+
     try {
       await onGenerate(prompt);
-    } finally {
+    } catch (err) {
+      console.error('Image generation failed:', err);
+      const errorMessage = {
+        role: 'assistant',
+        type: 'text',
+        content: 'Failed to generate image. Please try again.',
+      };
+      setMessages(prev => [...prev, errorMessage]);
     }
-  }, [onGenerate]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    debouncedGenerate(prompt);
+    setPrompt('');
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      handleSubmit(e);
-    }
-  };
-
-  return (
-    <div className="image-generator-container">
-
-
-      <div className="image-display-area">
-        {submittedPrompt && (
-          <ImageGen 
-            prompt={submittedPrompt}
-            isGenerating={isGenerating}
- 
-          />
+   return (
+    <div className="chat-container">
+      <div className="chat-history-container" ref={chatHistoryRef}>
+        <ChatHistory messages={messages} />
+        {isGenerating && (
+          <div className="generating-indicator">
+            Generating image...
+          </div>
         )}
       </div>
-
       <div className="input-area">
-          <InputCase 
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onSubmit={handleSubmit}
-          />
-    
+        <InputCase 
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSubmit(e)}
+          onSubmit={handleSubmit}
+        />
       </div>
     </div>
   );
 };
+
 
 export default ImageGenerator;
