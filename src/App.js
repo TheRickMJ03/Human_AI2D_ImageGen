@@ -38,6 +38,7 @@ function App() {
   const [currentImage, setCurrentImage] = useState(null);
   const [showTitle, setShowTitle] = useState(true);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [conversation, setConversation] = useState([]); //This will Track the whole conversation
   const [selectedModel, setSelectedModel] = useState({
     provider: 'openai',
     model: 'dall-e-3'
@@ -54,38 +55,54 @@ function App() {
 
 
   useEffect(() => {
-    let isMounted = true;
-    const newSocket = io('http://localhost:5000');
+  let isMounted = true;
+  const newSocket = io('http://localhost:5000');
 
-    const loadImages = async () => {
-      if (!isMounted) return;
-      setLoading(true);
-      try {
-        const res = await fetch('http://localhost:5000/Thumbnails');
-        const data = await res.json();
-        if (isMounted) setImages(data);
-      } finally {
-        if (isMounted) setLoading(false);
+  const loadImages = async () => {
+    if (!isMounted) return;
+    setLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/Thumbnails');
+      const data = await res.json();
+      if (isMounted) setImages(data);
+    } finally {
+      if (isMounted) setLoading(false);
+    }
+  };
+  
+  loadImages();
+  
+ newSocket.on('new_image', (newImage) => {
+  console.log('Received new image', newImage);
+  
+  setImages(prev => {
+    const updatedImages = [newImage, ...prev];
+    setConversation(prevConv => [
+      ...prevConv.filter(item => item.id !== newImage.id),
+      {
+        prompt: newImage.prompt,
+        url: newImage.url,
+        description: newImage.description,
+        id: newImage.id,
+        model: newImage.model,
+        timestamp: newImage.timestamp
       }
-    };
-    
-    loadImages();
-    
-    newSocket.on('new_image', (newImage) => {
-      console.log('Received new image', newImage);
-      setCurrentImage(newImage);
-      setImages(prev => [newImage, ...prev]);
-      setIsGenerating(false);
-    });
+    ]);
+    return updatedImages;
+  });
+  
+  setCurrentImage(newImage);
+  setIsGenerating(false);
+});
+  return () => {
+    isMounted = false;
+    newSocket.off('new_image');
+    newSocket.disconnect();
+  };
+}, []);
 
-    return () => {
-      isMounted = false;
-      newSocket.off('new_image');
-      newSocket.disconnect();
-    };
-  }, []);
 
-  const handleGenerate = async (prompt) => {
+const handleGenerate = async (prompt) => {
   setShowTitle(false);
   setIsGenerating(true);
   setIsAnimating(true);
@@ -93,52 +110,107 @@ function App() {
 
   try {
     let result;
+    let imageFilename = null;
+
+    // Always use the last image from conversation history
+    if (conversation.length > 0) {
+      const lastImage = conversation[conversation.length - 1];
+      const urlParts = lastImage.url.split('/');
+      imageFilename = urlParts[urlParts.length - 1];
+      console.log('Using last generated image:', imageFilename);
+    }
 
     switch (selectedModel.provider) {
 
 
      case 'openai':
-        try {
-          const openaiResponse = await openai.images.generate({
-            model: selectedModel.model,
-            prompt: prompt,
-            n: 1,
-            size: "1024x1024",
-            response_format: "url" 
-          });
+                try {
+            let openaiResponse;
+            
+            
+            if (selectedModel.model === 'gpt-4-vision-preview') {
+              openaiResponse = await openai.chat.completions.create({
+                model: selectedModel.model,
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      { type: "text", text: prompt },
+                      { 
+                        type: "image_url",
+                        image_url: result?.url  
+                      }
+                    ]
+                  }
+                ],
+                max_tokens: 300
+              });
+              
+              result = {
+                response: openaiResponse.choices[0].message.content,
+                provider: 'openai',
+                model: selectedModel.model,
+                prompt: prompt,
+                timestamp: Date.now()
+              };
+            } 
+            else {
+              openaiResponse = await openai.images.generate({
+                model: selectedModel.model,
+                prompt: prompt,
+                n: 1,
+                size: "1024x1024",
+              });
 
-          result = {
-            url: openaiResponse.data[0].url,
-            provider: 'openai',
-            model: selectedModel.model,
-            prompt: prompt,
-            timestamp: Date.now()
-          };
+              result = {
+                url: openaiResponse.data[0].url,
+                provider: 'openai',
+                model: selectedModel.model,
+                prompt: prompt,
+                timestamp: Date.now()
+              };
 
-          // Save the image to backend
-          const saveResponse = await fetch('http://localhost:5000/save_openai_image', {
+              const saveResponse = await fetch('http://localhost:5000/save_openai_image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  image_url: result.url,
+                  prompt: prompt,
+                  model: selectedModel.model
+                })
+              });
+
+              if (!saveResponse.ok) throw new Error('Failed to save image to backend');
+            }
+
+            return result;
+            
+          } catch (error) {
+            console.error("OpenAI API error:", error);
+            throw new Error(`OpenAI processing failed: ${error.message}`);
+          }
+
+    case 'Imagen':
+    if (selectedModel.model === 'gemini-2.0-flash-preview-image-generation') {
+        const response = await fetch('http://localhost:5000/gemini', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              image_url: result.url,
-              prompt: prompt,
-              model: selectedModel.model
-            })
-          });
-
-          if (!saveResponse.ok) {
-            throw new Error('Failed to save OpenAI image to backend');
-          }
-
-          
-        } catch (error) {
-          console.error("OpenAI generation failed:", error);
-          throw new Error(`OpenAI generation failed: ${error.message}`);
+                prompt: prompt,
+                image_filename: conversation.length > 0 ? imageFilename : null,
+                model: selectedModel.model
+            }),
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Gemini generation failed');
         }
-        break;
-
-      case 'Imagen':
-        const imagenResponse = await fetch('http://localhost:5000/imagen', {
+        
+        result = await response.json();
+        return result; // Let the socket handle UI updates
+    }else{
+      const imagenResponse = await fetch('http://localhost:5000/imagen', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
@@ -155,89 +227,117 @@ function App() {
 
        
         result = await imagenResponse.json();
-        
+        return result; // Let the socket handle UI updates
 
-        break;
-
-
-
-
-      case 'huggingface':
-        const hfModel = HF_MODELS[selectedModel.model];
-        if (!hfModel) {
-          throw new Error(`No configuration found for model: ${selectedModel.model}`);
-        }
-        const hfresponse = await fetch('http://localhost:5000/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            prompt,
-            model: selectedModel.model,
-            provider: hfModel.provider 
-          })
-        });
-        
-        if (!hfresponse.ok) throw new Error('HuggingFace generation failed');
-        result = await hfresponse.json();
-        break;
 
     }
+    break;
 
 
-  } catch (error) {
-    console.error("Image generation failed:", error);
-    alert(`Image generation failed: ${error.message}`);
-  } finally {
-    setIsGenerating(false);
-  }
+
+
+    case 'huggingface':
+      const hfModel = HF_MODELS[selectedModel.model];
+      if (!hfModel) {
+        throw new Error(`No configuration found for model: ${selectedModel.model}`);
+      }
+      const hfresponse = await fetch('http://localhost:5000/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          prompt,
+          model: selectedModel.model,
+          provider: hfModel.provider 
+        })
+      });
+      
+      if (!hfresponse.ok) throw new Error('HuggingFace generation failed');
+      result = await hfresponse.json();
+      break;
+
+    }
+      setImages(prev => [{
+            id: result.id,
+            url: result.url,
+            prompt: result.prompt,
+            timestamp: result.timestamp,
+            model: result.model
+          }, ...prev]);
+
+          setCurrentImage({
+            id: result.id,
+            url: result.url,
+            prompt: result.prompt,
+            timestamp: result.timestamp,
+            model: result.model
+          });
+
+          } catch (error) {
+              console.error("Generation failed:", error);
+              alert(`Error: ${error.message}`);
+            } finally {
+              setIsGenerating(false);
+            }
 };
 
+ 
 
   const handleModelSelect = (provider, model) => {
     setSelectedModel({ provider, model });
   };
 
-  return (
-    <>
-   <Navbar selectedModel={selectedModel}>
+return (
+  <>
+    <Navbar selectedModel={selectedModel}>
       <NavItem icon={<CaretIcon />}>
         <DropdownMenu 
           onModelSelect={handleModelSelect} 
           selectedModel={selectedModel}
         />
       </NavItem>
-  </Navbar>
+    </Navbar>
 
-     
-    <div className="app">
-      <div className="main-content"> {}
-        {showTitle && (
-          <CSSTransition
-            in={showTitle}
-            timeout={300}
-            classNames="fade"
-            unmountOnExit
-          >
-            <div className="title-container">
-              <h1 className="main-title">Human_AI2D_ImageGen</h1>
-              <p className="subtitle">By Ricardo Mejia</p>
-            </div>
-          </CSSTransition>
-        )}
-        
-        <div className={`content-container ${!showTitle ? 'content-expand' : ''}`}>
-          <ImageGenerator 
-            onGenerate={handleGenerate} 
-            selectedModel={selectedModel} 
-            currentImage={currentImage}
-            isGenerating={isGenerating}
-          />
-          <Thumbnails images={images} loading={loading} isGallery={false} />
+    {/* Scrollable content */}
+          <div className="chat-wrapper">
+        <div className="scrollable-chat">
+          {showTitle && (
+            <CSSTransition in={showTitle} timeout={300} classNames="fade" unmountOnExit>
+              <div className="title-container">
+                <h1 className="main-title">Human_AI2D_ImageGen</h1>
+                <p className="subtitle">By Ricardo Mejia</p>
+              </div>
+            </CSSTransition>
+          )}
+
+          <div className={`content-container ${!showTitle ? 'content-expand' : ''}`}>
+            <ImageGenerator 
+              onGenerate={handleGenerate}
+              selectedModel={selectedModel} 
+              currentImage={currentImage}
+              currentDescription={conversation.find(item => item.url === currentImage?.url)?.description}
+              isGenerating={isGenerating}
+            />
+          </div>
+        </div>
+
+        {}
+        <div className="fixed-thumbnails">
+          <Thumbnails 
+            images={[...new Map(images.map(item => [item.id, item])).values()]} 
+            loading={loading} 
+            isGallery={false}
+            descriptions={conversation.reduce((acc, item) => {
+              if (item.url && item.description) {
+                acc[item.url] = item.description;
+              }
+              return acc;
+            }, {})}
+          />       
         </div>
       </div>
-    </div>
   </>
-  );
+);
+
 }
 
 function Navbar(props) {
@@ -250,14 +350,21 @@ function Navbar(props) {
             {props.selectedModel.provider === 'openai' && (
               <>
                 <img src={openailogo} alt="OpenAI" className="icon-image small" />
-                {props.selectedModel.model === 'dall-e-3' ? 'DALL·E 3' : 'DALL·E 2'}
+                   {props.selectedModel.model === 'dall-e-3' ? 'DALL·E 3' : 
+                    props.selectedModel.model === 'dall-e-2' ? 'DALL·E 2' :
+                    props.selectedModel.model === 'gpt-image-1' ? 'GPT IMAGE 1' : 
+                    props.selectedModel.model 
+    }
               </>
             )}
             {props.selectedModel.provider === 'Imagen' && (
               <>
                 <img src={ImagenLogo} alt="Imagen" className="icon-image small" />
-                {props.selectedModel.model.includes('4.0-ultra') ? 'Imagen 4 Ultra' : 
-                 props.selectedModel.model.includes('4.0') ? 'Imagen 4' : 'Imagen 3'}
+            {props.selectedModel.model.includes('gemini-2.0-flash') ? 'Gemini 2.0 Flash' :
+            props.selectedModel.model.includes('imagen-4.0-ultra') ? 'Imagen 4 Ultra' :
+            props.selectedModel.model.includes('imagen-4.0') ? 'Imagen 4' :
+            'Imagen 3'}
+                 
               </>
             )}
             {props.selectedModel.provider === 'huggingface' && (
@@ -355,7 +462,7 @@ function DropdownMenu({ onModelSelect, selectedModel, closeMenu  }) {
             rightIcon={<Right_arrow />}
             goToMenu="Google Imagen"
           >
-            Google Imagen
+            Google Models
           </DropdownItem>
 
           <DropdownItem
@@ -378,8 +485,16 @@ function DropdownMenu({ onModelSelect, selectedModel, closeMenu  }) {
       >
         <div className="menu" ref={menuImagenRef}>
           <DropdownItem goToMenu="main" leftIcon={<ArrowIcon />}>
-            <h2>Google Imagen</h2>
+            <h2>Google Models</h2>
           </DropdownItem>
+          <DropdownItem 
+            leftIcon={<img src={ImagenLogo} alt="Imagen" className="icon-image" />}
+            onClick={() => handleModelClick('Imagen', 'gemini-2.0-flash-preview-image-generation')}
+            active={selectedModel.model === 'gemini-2.0-flash-preview-image-generation'}
+          >
+            Gemini-2.0-flash
+          </DropdownItem>
+
           <DropdownItem 
             leftIcon={<img src={ImagenLogo} alt="Imagen" className="icon-image" />}
             onClick={() => handleModelClick('Imagen', 'imagen-4.0-ultra-generate-preview-06-06')}
@@ -448,6 +563,14 @@ function DropdownMenu({ onModelSelect, selectedModel, closeMenu  }) {
           <DropdownItem goToMenu="main" leftIcon={<ArrowIcon />}>
             <h2>OpenAI</h2>
           </DropdownItem>
+          <DropdownItem 
+            leftIcon={<img src={openailogo} alt="OpenAI" className="icon-image" />}
+            onClick={() => handleModelClick('openai', 'gpt-image-1')}
+            active={selectedModel.model === 'gpt-image-1'}
+          >
+            GPT IMAGE 1
+          </DropdownItem>
+
           <DropdownItem 
             leftIcon={<img src={openailogo} alt="OpenAI" className="icon-image" />}
             onClick={() => handleModelClick('openai', 'dall-e-3')}

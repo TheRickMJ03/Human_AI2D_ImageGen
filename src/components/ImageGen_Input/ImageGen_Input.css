@@ -14,14 +14,13 @@
 }
 
 .input-area {
-  padding: 16px;
-  background: #fff;
-  border-top: 1px solid #e0e0e0;
   position: sticky;
   bottom: 0;
-  background: var(--bg-color);
+  padding: 16px;
+  background: #000000;
+  border-top: 1px solid #000000;
+  z-index: 2; 
 }
-
 .generating-indicator {
   padding: 8px;
   text-align: center;
