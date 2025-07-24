@@ -71,7 +71,7 @@ def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-ima
                 image.verify()  # Verify without loading
                 image = Image.open(image_path)  # Reopen after verify
                 
-                contents.append(image)
+                contents.append(image)#previous image is passed along with the new prompt
             except Exception as e:
                 app.logger.error(f"Image loading error: {str(e)}")
                 raise Exception(f"Could not load image: {str(e)}")

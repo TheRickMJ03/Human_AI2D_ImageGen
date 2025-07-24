@@ -6,11 +6,12 @@ import { io } from "socket.io-client";
 // Components
 import ImageGenerator from './components/ImageGen_Input/ImageGen_Input';
 import Thumbnails from './components/Thumbnails/Thumbnails';
-
+import { handleGeneration } from './components/GenerateHandler/GenerateHandler'
 // Assets
 import ImagenLogo from './assets/gemini_logo.png';
 import openailogo from './assets/chatgpt-logo-chat-gpt-icon-on-white-background-free-vector.jpg';
 import Hflogo from './assets/hf-logo.svg';
+import new_chatlogo from './assets/new_chatlogo.png';
 import { ReactComponent as CaretIcon } from './assets/download.svg';
 import { ReactComponent as ArrowIcon } from './assets/arrow.svg';
 import { ReactComponent as Right_arrow } from './assets/right_arrow.svg';
@@ -32,31 +33,33 @@ import './App.css';
   }; 
 
 function App() {
-  const [images, setImages] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [currentImage, setCurrentImage] = useState(null);
-  const [showTitle, setShowTitle] = useState(true);
-  const [isAnimating, setIsAnimating] = useState(false);
+  const [images, setImages] = useState([]);//Stores images that will go in the history grid
+  const [loading, setLoading] = useState(false);//tracks loading states for thumnails 
+  const [isGenerating, setIsGenerating] = useState(false);//Tracks image generation status
+  const [currentImage, setCurrentImage] = useState(null);//Currently selected/main image
+  const [showTitle, setShowTitle] = useState(true);// Controls visibility of the welcome title
+  const [isAnimating, setIsAnimating] = useState(false);//Tracks the history of prompts and results
   const [conversation, setConversation] = useState([]); //This will Track the whole conversation
-  const [selectedModel, setSelectedModel] = useState({
+  const [selectedModel, setSelectedModel] = useState({//Currently selected AI model
     provider: 'openai',
     model: 'dall-e-3'
   });
+  const [forceReset, setForceReset] = useState(0);
+
 
   
 
-  // Initialize API clients
-  const openai = new OpenAI({
-    apiKey: process.env.REACT_APP_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true
-  });
+  // // Initialize API clients
+  // const openai = new OpenAI({
+  //   apiKey: process.env.REACT_APP_OPENAI_API_KEY,
+  //   dangerouslyAllowBrowser: true
+  // });
 
 
 
   useEffect(() => {
-  let isMounted = true;
-  const newSocket = io('http://localhost:5000');
+  let isMounted = true;//isMounted as a guard so it won’t set state if the component is already unmounted.
+  const newSocket = io('http://localhost:5000');//connects to the backend
 
   const loadImages = async () => {
     if (!isMounted) return;
@@ -71,7 +74,7 @@ function App() {
   };
   
   loadImages();
-  
+  //This is real-time UI Updated without needing to refresh
  newSocket.on('new_image', (newImage) => {
   console.log('Received new image', newImage);
   
@@ -103,183 +106,37 @@ function App() {
 
 
 const handleGenerate = async (prompt) => {
-  setShowTitle(false);
-  setIsGenerating(true);
-  setIsAnimating(true);
-  setCurrentImage(null);
-
   try {
-    let result;
-    let imageFilename = null;
+    const result = await handleGeneration({
+      prompt,
+      selectedModel,
+      conversation,
+      setShowTitle,
+      setIsGenerating,
+      setIsAnimating,
+      setCurrentImage,
+      setImages,
+      setConversation
+    });
 
-    // Always use the last image from conversation history
-    if (conversation.length > 0) {
-      const lastImage = conversation[conversation.length - 1];
-      const urlParts = lastImage.url.split('/');
-      imageFilename = urlParts[urlParts.length - 1];
-      console.log('Using last generated image:', imageFilename);
-    }
-
-    switch (selectedModel.provider) {
-
-
-     case 'openai':
-                try {
-            let openaiResponse;
-            
-            
-            if (selectedModel.model === 'gpt-4-vision-preview') {
-              openaiResponse = await openai.chat.completions.create({
-                model: selectedModel.model,
-                messages: [
-                  {
-                    role: "user",
-                    content: [
-                      { type: "text", text: prompt },
-                      { 
-                        type: "image_url",
-                        image_url: result?.url  
-                      }
-                    ]
-                  }
-                ],
-                max_tokens: 300
-              });
-              
-              result = {
-                response: openaiResponse.choices[0].message.content,
-                provider: 'openai',
-                model: selectedModel.model,
-                prompt: prompt,
-                timestamp: Date.now()
-              };
-            } 
-            else {
-              openaiResponse = await openai.images.generate({
-                model: selectedModel.model,
-                prompt: prompt,
-                n: 1,
-                size: "1024x1024",
-              });
-
-              result = {
-                url: openaiResponse.data[0].url,
-                provider: 'openai',
-                model: selectedModel.model,
-                prompt: prompt,
-                timestamp: Date.now()
-              };
-
-              const saveResponse = await fetch('http://localhost:5000/save_openai_image', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  image_url: result.url,
-                  prompt: prompt,
-                  model: selectedModel.model
-                })
-              });
-
-              if (!saveResponse.ok) throw new Error('Failed to save image to backend');
-            }
-
-            return result;
-            
-          } catch (error) {
-            console.error("OpenAI API error:", error);
-            throw new Error(`OpenAI processing failed: ${error.message}`);
-          }
-
-    case 'Imagen':
-    if (selectedModel.model === 'gemini-2.0-flash-preview-image-generation') {
-        const response = await fetch('http://localhost:5000/gemini', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                prompt: prompt,
-                image_filename: conversation.length > 0 ? imageFilename : null,
-                model: selectedModel.model
-            }),
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Gemini generation failed');
+    // Handle any additional state updates if needed
+    if (result) {
+      setConversation(prevConv => [
+        ...prevConv,
+        {
+          prompt: result.prompt,
+          url: result.url,
+          description: result.description,
+          id: result.id,
+          model: result.model,
+          timestamp: result.timestamp
         }
-        
-        result = await response.json();
-        return result; // Let the socket handle UI updates
-    }else{
-      const imagenResponse = await fetch('http://localhost:5000/imagen', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            prompt, 
-            model: selectedModel.model,
-            size: "1024x1024" 
-          })
-        });
-
-        if (!imagenResponse.ok) {
-          const errorData = await imagenResponse.json();
-          throw new Error(errorData.error || 'Imagen generation failed');
-        }
-
-       
-        result = await imagenResponse.json();
-        return result; // Let the socket handle UI updates
-
-
+      ]);
     }
-    break;
-
-
-
-
-    case 'huggingface':
-      const hfModel = HF_MODELS[selectedModel.model];
-      if (!hfModel) {
-        throw new Error(`No configuration found for model: ${selectedModel.model}`);
-      }
-      const hfresponse = await fetch('http://localhost:5000/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          prompt,
-          model: selectedModel.model,
-          provider: hfModel.provider 
-        })
-      });
-      
-      if (!hfresponse.ok) throw new Error('HuggingFace generation failed');
-      result = await hfresponse.json();
-      break;
-
-    }
-      setImages(prev => [{
-            id: result.id,
-            url: result.url,
-            prompt: result.prompt,
-            timestamp: result.timestamp,
-            model: result.model
-          }, ...prev]);
-
-          setCurrentImage({
-            id: result.id,
-            url: result.url,
-            prompt: result.prompt,
-            timestamp: result.timestamp,
-            model: result.model
-          });
-
-          } catch (error) {
-              console.error("Generation failed:", error);
-              alert(`Error: ${error.message}`);
-            } finally {
-              setIsGenerating(false);
-            }
+  } catch (error) {
+    alert(`Error: ${error.message}`);
+  }
 };
-
  
 
   const handleModelSelect = (provider, model) => {
@@ -288,14 +145,25 @@ const handleGenerate = async (prompt) => {
 
 return (
   <>
-    <Navbar selectedModel={selectedModel}>
-      <NavItem icon={<CaretIcon />}>
-        <DropdownMenu 
-          onModelSelect={handleModelSelect} 
-          selectedModel={selectedModel}
-        />
-      </NavItem>
-    </Navbar>
+  <Navbar 
+    selectedModel={selectedModel} 
+    onNewChat={() => {
+    setConversation([]);
+  setCurrentImage(null);
+  setShowTitle(true);
+  setForceReset(prev => prev + 1);  
+
+
+  setForceReset(prev => prev + 1);
+    }}
+  >
+    <NavItem icon={<CaretIcon />}>
+      <DropdownMenu 
+        onModelSelect={handleModelSelect} 
+        selectedModel={selectedModel}
+      />
+    </NavItem>
+  </Navbar>
 
     {/* Scrollable content */}
           <div className="chat-wrapper">
@@ -308,16 +176,18 @@ return (
               </div>
             </CSSTransition>
           )}
-
-          <div className={`content-container ${!showTitle ? 'content-expand' : ''}`}>
-            <ImageGenerator 
-              onGenerate={handleGenerate}
-              selectedModel={selectedModel} 
-              currentImage={currentImage}
-              currentDescription={conversation.find(item => item.url === currentImage?.url)?.description}
-              isGenerating={isGenerating}
-            />
-          </div>
+        <div 
+          key={forceReset}  
+          className={`content-container ${!showTitle ? 'content-expand' : ''}`}
+        >
+          <ImageGenerator 
+            onGenerate={handleGenerate}
+            selectedModel={selectedModel} 
+            currentImage={currentImage}
+            currentDescription={conversation.find(item => item.url === currentImage?.url)?.description}
+            isGenerating={isGenerating}
+          />
+        </div>
         </div>
 
         {}
@@ -340,44 +210,66 @@ return (
 
 }
 
-function Navbar(props) {
+function Navbar({ selectedModel, children, onNewChat }) {
   return (
     <nav className="navbar">
       <ul className="navbar-nav">
-        {props.children}
+        {/* Dropdown / other children */}
+        {}
+        <li className="nav-item">
+          <button className="new-chat-btn" onClick={onNewChat}>
+            <img src={new_chatlogo} alt="App Logo" className="nav-logo" />
+
+             New Chat
+          </button>
+        </li>
+
+
+        <div className="nav-spacer"></div>
+
+        {children}
+
+        {/* Model indicator */}
         <li className="nav-item model-indicator">
           <div className="model-text">
-            {props.selectedModel.provider === 'openai' && (
+            {selectedModel.provider === 'openai' && (
               <>
                 <img src={openailogo} alt="OpenAI" className="icon-image small" />
-                   {props.selectedModel.model === 'dall-e-3' ? 'DALL·E 3' : 
-                    props.selectedModel.model === 'dall-e-2' ? 'DALL·E 2' :
-                    props.selectedModel.model === 'gpt-image-1' ? 'GPT IMAGE 1' : 
-                    props.selectedModel.model 
-    }
+                {selectedModel.model === 'dall-e-3'
+                  ? 'DALL·E 3'
+                  : selectedModel.model === 'dall-e-2'
+                  ? 'DALL·E 2'
+                  : selectedModel.model === 'gpt-image-1'
+                  ? 'GPT IMAGE 1'
+                  : selectedModel.model}
               </>
             )}
-            {props.selectedModel.provider === 'Imagen' && (
+
+            {selectedModel.provider === 'Imagen' && (
               <>
                 <img src={ImagenLogo} alt="Imagen" className="icon-image small" />
-            {props.selectedModel.model.includes('gemini-2.0-flash') ? 'Gemini 2.0 Flash' :
-            props.selectedModel.model.includes('imagen-4.0-ultra') ? 'Imagen 4 Ultra' :
-            props.selectedModel.model.includes('imagen-4.0') ? 'Imagen 4' :
-            'Imagen 3'}
-                 
+                {selectedModel.model.includes('gemini-2.0-flash')
+                  ? 'Gemini 2.0 Flash'
+                  : selectedModel.model.includes('imagen-4.0-ultra')
+                  ? 'Imagen 4 Ultra'
+                  : selectedModel.model.includes('imagen-4.0')
+                  ? 'Imagen 4'
+                  : 'Imagen 3'}
               </>
             )}
-            {props.selectedModel.provider === 'huggingface' && (
+
+            {selectedModel.provider === 'huggingface' && (
               <>
                 <img src={Hflogo} alt="HuggingFace" className="icon-image small" />
-                {HF_MODELS[props.selectedModel.model]?.name || props.selectedModel.model}
+                {HF_MODELS[selectedModel.model]?.name || selectedModel.model}
                 <span className="provider-tag">
-                  {HF_MODELS[props.selectedModel.model]?.provider}
+                  {HF_MODELS[selectedModel.model]?.provider}
                 </span>
               </>
             )}
           </div>
         </li>
+
       </ul>
     </nav>
   );
