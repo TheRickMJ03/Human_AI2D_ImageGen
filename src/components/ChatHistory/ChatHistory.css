@@ -3,6 +3,8 @@
   flex-direction: column-reverse;
   gap: 12px;
   padding: 16px;
+  overflow-y: auto;
+  height: 100%;
 }
 
 .chat-history::-webkit-scrollbar {
@@ -43,24 +45,153 @@
   color: #333;
 }
 
+/* Image Message Container */
 .image-message {
   max-width: 100%;
+  position: relative;
+  display: inline-block; 
+}
+
+/* Base Image Styling */
+.image-container {
+  position: relative;
+  display: inline-block;
+  line-height: 0; 
 }
 
 .image-message img {
   max-width: 100%;
+  max-height: 500px;
   border-radius: 8px;
   display: block;
+  cursor: crosshair;
+  position: relative;
+  z-index: 1;
 }
+
+/* Segmentation Points */
+.segmentation-point {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  background-color: #00ff00; 
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 3;
+  border: 2px solid white;
+  box-shadow: 0 0 5px rgba(0,0,0,0.5);
+  animation: pulse 1.5s infinite;
+}
+
+
+.segmentation-visualization {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 8px;
+}
+/* Segmentation Mask - Perfect Alignment */
+.segmentation-mask-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+
+.segmentation-mask {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  mix-blend-mode: multiply;
+  opacity: 0.9;
+}
+
+
 
 .image-prompt {
   margin-top: 8px;
   font-size: 0.9em;
   color: #666;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 .image-timestamp {
   font-size: 0.8em;
   color: #999;
   margin-top: 4px;
+}
+
+/* Loading and Error States */
+.segmentation-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 8px 16px;
+  border-radius: 20px;
+  z-index: 4;
+}
+
+.segmentation-error {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  color: white;
+  background: rgba(214, 48, 49, 0.8);
+  padding: 8px 12px;
+  border-radius: 4px;
+  z-index: 4;
+  font-size: 0.9em;
+}
+
+/* Clear Button */
+.clear-segmentation {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.image-container:hover .clear-segmentation {
+  display: block;
+}
+
+/* Visual feedback during interaction */
+.image-message.segmenting img {
+  outline: 2px solid #72869c;
+  outline-offset: 2px;
+}
+
+
+@keyframes pulse {
+  0% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.2); }
+  100% { transform: translate(-50%, -50%) scale(1); }
 }

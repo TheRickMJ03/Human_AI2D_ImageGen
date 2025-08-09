@@ -47,14 +47,6 @@ function App() {
   const [forceReset, setForceReset] = useState(0);
 
 
-  
-
-  // // Initialize API clients
-  // const openai = new OpenAI({
-  //   apiKey: process.env.REACT_APP_OPENAI_API_KEY,
-  //   dangerouslyAllowBrowser: true
-  // });
-
 
 
   useEffect(() => {

@@ -15,6 +15,7 @@ import google.auth.transport.requests
 from google import genai
 from google.genai import types
 from google.genai.types import GenerateContentConfig, Modality
+import json 
 load_dotenv()
 
 app = Flask(__name__)
@@ -53,6 +54,8 @@ def get_access_token_from_service_account():
     )
     credentials.refresh(google.auth.transport.requests.Request())
     return credentials.token
+
+
 
 def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-image-generation"):
     try:
@@ -111,8 +114,75 @@ def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-ima
         app.logger.error(f"Gemini generation error: {str(e)}", exc_info=True)
         raise
     
-    
+SAMVMURL = "http://34.63.104.231:5000"
+def upload_to_vm(filepath, metadata=None):
+    """Upload a file to the VM server"""
+    try:
+        url = "{SAMVMURL}/upload"
+        
+        with open(filepath, 'rb') as f:
+            files = {'file': (os.path.basename(filepath), f)}
+            data = metadata or {}
+            
+            response = requests.post(url, files=files, data=data)
+            response.raise_for_status()
+            
+            return response.json()
+    except Exception as e:
+        print(f"Upload to VM failed: {str(e)}")
+        return None
 
+
+
+#SAM Endpoint
+@app.route('/segment_with_sam', methods=['POST'])
+def segment_with_sam(): 
+    try:
+        data = request.json
+        image_path = os.path.join('generated_images', os.path.basename(data['image_url']))
+        
+        # Verify image exists
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+
+        # Prepare the request to VM
+        with open(image_path, 'rb') as img_file:
+            image_bytes = img_file.read()
+            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+            response = requests.post(
+                f"{SAMVMURL}/segment",
+                json={
+                    'image_url': f"data:image/png;base64,{image_base64}",
+                    'input_points': data['input_points'],
+                    'input_labels': data['input_labels']
+                },
+                timeout=30
+            )
+
+        print(f"VM Response Status: {response.status_code}")
+        print(f"VM Response Content: {response.text}")
+
+        if response.status_code != 200:
+            return jsonify({
+                'error': 'SAM processing failed',
+                'vm_error': response.text
+            }), 500
+
+        vm_data = response.json()
+        if 'masks' not in vm_data:
+            return jsonify({
+                'error': 'No mask data in VM response',
+                'vm_response': vm_data
+            }), 500
+
+        return jsonify(vm_data)
+
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
 
 @app.route('/gemini', methods=['POST'])
 def gemini_iterate():
