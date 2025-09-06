@@ -8,96 +8,143 @@ const ChatHistory = ({ messages }) => {
     points: [],
     mask: null
   });
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [plyFiles, setPlyFiles] = useState({});
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-const handleImageClick = async (e, imageUrl) => {
-  const img = e.target;
-  const rect = img.getBoundingClientRect();
-  
-  // Calculate coordinates relative to the displayed image
-  const displayWidth = rect.width;
-  const displayHeight = rect.height;
-  
-  // Get natural image dimensions
-  const naturalWidth = img.naturalWidth;
-  const naturalHeight = img.naturalHeight;
-  
-  // Calculate scale factors
-  const scaleX = naturalWidth / displayWidth;
-  const scaleY = naturalHeight / displayHeight;
-  
-  // Get click position in image coordinates
-  const clickX = (e.clientX - rect.left) * scaleX;
-  const clickY = (e.clientY - rect.top) * scaleY;
-  
-  // Normalize coordinates (0-1 range)
-  const normalizedX = clickX / naturalWidth;
-  const normalizedY = clickY / naturalHeight;
+  const handleImageClick = async (e, imageUrl) => {
+    const img = e.target;
+    const rect = img.getBoundingClientRect();
 
-  console.log('Click coordinates:', {
-    display: { x: e.clientX - rect.left, y: e.clientY - rect.top },
-    image: { x: clickX, y: clickY },
-    normalized: { x: normalizedX, y: normalizedY }
-  });
+    // Calculate coordinates relative to the displayed image
+    const displayWidth = rect.width;
+    const displayHeight = rect.height;
 
-  const newPoints = segmentationData.imageUrl === imageUrl
-    ? [...segmentationData.points, { x: normalizedX, y: normalizedY }]
-    : [{ x: normalizedX, y: normalizedY }];
+    const naturalWidth = img.naturalWidth;
+    const naturalHeight = img.naturalHeight;
 
-  setSegmentationData(prev => ({
-    ...prev,
-    imageUrl,
-    points: newPoints,
-    mask: null
-  }));
+    const scaleX = naturalWidth / displayWidth;
+    const scaleY = naturalHeight / displayHeight;
 
-  try {
-    setLoading(true);
-    setError(null);
+    const clickX = (e.clientX - rect.left) * scaleX;
+    const clickY = (e.clientY - rect.top) * scaleY;
 
-    const response = await fetch('http://localhost:5000/segment_with_sam', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image_url: `http://localhost:5000${imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`}`,
-        input_points: newPoints.map(p => [p.x, p.y]),
-        input_labels: Array(newPoints.length).fill(1)
-      })
-    });
+    const normalizedX = clickX / naturalWidth;
+    const normalizedY = clickY / naturalHeight;
+
+    const newPoints = segmentationData.imageUrl === imageUrl
+      ? [...segmentationData.points, { x: normalizedX, y: normalizedY }]
+      : [{ x: normalizedX, y: normalizedY }];
+
+    setSegmentationData(prev => ({
+      ...prev,
+      imageUrl,
+      points: newPoints,
+      mask: null
+    }));
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch('http://localhost:5000/segment_with_sam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_url: `http://localhost:5000${imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`}`,
+          input_points: newPoints.map(p => [p.x, p.y]),
+          input_labels: Array(newPoints.length).fill(1)
+        })
+      });
 
       const data = await response.json();
-         // Check if masks array exists and has at least one element
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
       if (!data.masks || data.masks.length === 0) {
         throw new Error('No masks received in response');
       }
 
-    
-
-      // Select the mask with highest confidence score
-      const bestMask = data.masks.reduce((prev, current) => 
+      // Pick best mask
+      const bestMask = data.masks.reduce((prev, current) =>
         (prev.score > current.score) ? prev : current
       );
 
-       if (!bestMask.mask) {
-      throw new Error('No mask data in best mask');
+      if (!bestMask.mask || !bestMask.visualization) {
+        throw new Error('Missing mask or visualization in best mask');
       }
 
+      // Use visualization for overlay display
+      const visUrl = `data:image/png;base64,${bestMask.visualization}`;
       setSegmentationData(prev => ({
         ...prev,
-        mask: `data:image/png;base64,${bestMask.mask}`
+        mask: visUrl
       }));
+
+      // Check if we have PLY data in the response
+      if (bestMask.ply_data) {
+        // Save PLY file locally
+        savePlyFile(bestMask.ply_data, `segmented_${Date.now()}.ply`, imageUrl);
+      }
+
 
 
     } catch (error) {
-      console.error("Segmentation Error:", error);
+      console.error("Error:", error);
       setError(error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const savePlyFile = (base64Data, filename, imageUrl) => {
+    try {
+      // Convert base64 to binary
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      // Create blob and download link
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create download link
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      
+      // Clean up
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      
+      // Update state to show download was successful
+      setPlyFiles(prev => ({
+        ...prev,
+        [imageUrl]: {
+          filename,
+          saved: true,
+          timestamp: new Date().toLocaleString()
+        }
+      }));
+      
+      console.log(`PLY file saved as: ${filename}`);
+      
+    } catch (error) {
+      console.error('Error saving PLY file:', error);
+      setError('Failed to save 3D model file');
     }
   };
 
@@ -163,6 +210,21 @@ const handleImageClick = async (e, imageUrl) => {
                       }}
                     />
                   ))
+                )}
+                
+                {/* PLY File Status */}
+                {plyFiles[msg.content] && (
+                  <div className="ply-status">
+                    {plyFiles[msg.content].saved ? (
+                      <span className="ply-success">
+                        ✓ 3D model saved as {plyFiles[msg.content].filename}
+                      </span>
+                    ) : (
+                      <span className="ply-saving">
+                        Saving 3D model...
+                      </span>
+                    )}
+                  </div>
                 )}
                 
                 {/* Clear Button */}
