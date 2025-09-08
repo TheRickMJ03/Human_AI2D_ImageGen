@@ -11,6 +11,10 @@
 # production
 /build
 
+/server/3d_models/
+/server/generated_images/
+/server/segmented_images/
+
 # misc
 .DS_Store
 .env.local

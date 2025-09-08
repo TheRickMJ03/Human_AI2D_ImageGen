@@ -11,7 +11,7 @@ const ChatHistory = ({ messages }) => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [plyFiles, setPlyFiles] = useState({});
+  const [isGenerating3D, setIsGenerating3D] = useState(false);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -87,14 +87,6 @@ const ChatHistory = ({ messages }) => {
         mask: visUrl
       }));
 
-      // Check if we have PLY data in the response
-      if (bestMask.ply_data) {
-        // Save PLY file locally
-        savePlyFile(bestMask.ply_data, `segmented_${Date.now()}.ply`, imageUrl);
-      }
-
-
-
     } catch (error) {
       console.error("Error:", error);
       setError(error.message);
@@ -103,50 +95,38 @@ const ChatHistory = ({ messages }) => {
     }
   };
 
-  const savePlyFile = (base64Data, filename, imageUrl) => {
+  // NEW: Function to generate 3D model
+  const generate3DModel = async () => {
+    if (!segmentationData.mask) return;
+    
+    setIsGenerating3D(true);
+    setError(null);
+
     try {
-      // Convert base64 to binary
-      const binaryString = atob(base64Data);
-      const bytes = new Uint8Array(binaryString.length);
-      
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
+      const response = await fetch('http://localhost:5000/generate_3d_direct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_url: segmentationData.imageUrl,
+          mask_data: segmentationData.mask.split(',')[1] // Extract base64 data
+        })
+      });
+
+      const result = await response.json();
+      if (result.error) {
+        throw new Error(result.error);
       }
-      
-      // Create blob and download link
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
-      
-      // Create download link
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      
-      // Clean up
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 100);
-      
-      // Update state to show download was successful
-      setPlyFiles(prev => ({
-        ...prev,
-        [imageUrl]: {
-          filename,
-          saved: true,
-          timestamp: new Date().toLocaleString()
-        }
-      }));
-      
-      console.log(`PLY file saved as: ${filename}`);
-      
+
+
     } catch (error) {
-      console.error('Error saving PLY file:', error);
-      setError('Failed to save 3D model file');
+      console.error("3D generation error:", error);
+      setError(error.message);
+    } finally {
+      setIsGenerating3D(false);
     }
   };
+
+
 
   const clearSegmentation = () => {
     setSegmentationData({
@@ -154,6 +134,7 @@ const ChatHistory = ({ messages }) => {
       points: [],
       mask: null
     });
+    setError(null);
   };
 
   return (
@@ -183,7 +164,7 @@ const ChatHistory = ({ messages }) => {
                   }}
                 />
                 
-                {/* Segmentation Mask Container */}
+                {/* Segmentation Mask Container - UNCHANGED */}
                 {segmentationData.mask && (
                   <img
                     src={segmentationData.mask}
@@ -198,7 +179,7 @@ const ChatHistory = ({ messages }) => {
                   />
                 )}
                 
-                {/* Segmentation Points */}
+                {/* Segmentation Points - UNCHANGED */}
                 {segmentationData.imageUrl === msg.content && (
                   segmentationData.points.map((point, i) => (
                     <div
@@ -212,22 +193,38 @@ const ChatHistory = ({ messages }) => {
                   ))
                 )}
                 
-                {/* PLY File Status */}
-                {plyFiles[msg.content] && (
-                  <div className="ply-status">
-                    {plyFiles[msg.content].saved ? (
-                      <span className="ply-success">
-                        ✓ 3D model saved as {plyFiles[msg.content].filename}
-                      </span>
-                    ) : (
-                      <span className="ply-saving">
-                        Saving 3D model...
-                      </span>
-                    )}
+                {/* NEW: Control Buttons */}
+                {segmentationData.imageUrl === msg.content && (
+                  <div className="segmentation-controls">
+                    <div className="points-count">
+                      Points: {segmentationData.points.length}
+                    </div>
+                    <button 
+                      className="generate-3d-btn"
+                      onClick={generate3DModel}
+                      disabled={isGenerating3D || !segmentationData.mask}
+                    >
+                      {isGenerating3D ? 'Generating 3D...' : 'Generate 3D'}
+                    </button>
+                    <button 
+                      className="clear-segmentation-btn"
+                      onClick={clearSegmentation}
+                    >
+                      Clear
+                    </button>
                   </div>
                 )}
                 
-                {/* Clear Button */}
+                {/* 3D Generation Overlay */}
+                {isGenerating3D && segmentationData.imageUrl === msg.content && (
+                  <div className="generating-3d-overlay">
+                    <div className="generating-3d-text">Generating 3D model...</div>
+                  </div>
+                )}
+                
+           
+                
+                {/* Clear Button - UNCHANGED */}
                 {segmentationData.imageUrl === msg.content && (
                   <button 
                     className="clear-segmentation" 

@@ -15,8 +15,12 @@ import google.auth.transport.requests
 from google import genai
 from google.genai import types
 from google.genai.types import GenerateContentConfig, Modality
-import json 
+import numpy as np
+from PIL import Image
+from io import BytesIO
+import base64
 load_dotenv()
+
 
 app = Flask(__name__)
 CORS(app) 
@@ -114,9 +118,9 @@ def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-ima
         app.logger.error(f"Gemini generation error: {str(e)}", exc_info=True)
         raise
     
-SAMVMURL = "http://34.63.104.231:5000"
+SAMVMURL = "http://34.60.140.129:5000"
+VM_3D_SERVER_URL = "http://34.60.140.129:5001"
 def upload_to_vm(filepath, metadata=None):
-    """Upload a file to the VM server"""
     try:
         url = "{SAMVMURL}/upload"
         
@@ -131,64 +135,134 @@ def upload_to_vm(filepath, metadata=None):
     except Exception as e:
         print(f"Upload to VM failed: {str(e)}")
         return None
+    
 
+@app.route('/generate_3d_direct', methods=['POST'])
+def generate_3d_direct():
+    try:
+        data = request.json
+        image_url = data['image_url']
+        mask_data = data['mask_data']
+
+        # Extract filename from URL
+        image_filename = os.path.basename(image_url)
+        image_path = os.path.join('generated_images', image_filename)
+        
+        # Verify files exist
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+        
+        # Load original image
+        with open(image_path, 'rb') as f:
+            original_image = Image.open(f).convert('RGBA')
+        
+        # Decode mask
+        mask_bytes = base64.b64decode(mask_data.split(',')[-1] if ',' in mask_data else mask_data)
+        mask_image = Image.open(BytesIO(mask_bytes)).convert('L')
+        
+        # Ensure mask matches image size
+        if mask_image.size != original_image.size:
+            mask_image = mask_image.resize(original_image.size, Image.LANCZOS)
+        
+        # Apply mask to original image
+        original_image.putalpha(mask_image)
+        
+        # Crop to bounding box
+        bbox = original_image.getbbox()
+        if not bbox:
+            return jsonify({'error': 'No object found in mask'}), 400
+            
+        cropped = original_image.crop(bbox)
+        
+        # Resize and pad to 256x256
+        cropped.thumbnail((256, 256), Image.LANCZOS)
+        padded = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+        x = (256 - cropped.width) // 2
+        y = (256 - cropped.height) // 2
+        padded.paste(cropped, (x, y))
+        
+        # Convert to base64
+        buffer = BytesIO()
+        padded.save(buffer, format='PNG')
+        final_image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        # Send DIRECTLY to 3D server
+        print(f"Connecting to  {VM_3D_SERVER_URL}/process")
+
+        response = requests.post(
+            f"{VM_3D_SERVER_URL}/process",  
+            json={"image": f"data:image/png;base64,{final_image_base64}"},
+            timeout=300
+        )
+        # Save the returned PLY data locally
+        if response.status_code == 200:
+            ply_data = response.json().get('ply_data')
+            if ply_data:
+                # Create 3D models directory
+                os.makedirs('3d_models', exist_ok=True)
+                
+                # Save locally
+                filename = f"3d_model_{int(time.time())}.ply"
+                filepath = os.path.join('3d_models', filename)
+                
+                with open(filepath, 'wb') as f:
+                    f.write(base64.b64decode(ply_data))
+
+
+        if response.status_code != 200:
+            return jsonify({
+                'error': '3D generation failed',
+                'details': response.text
+            }), 500
+        
+        return jsonify(response.json())
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 #SAM Endpoint
 @app.route('/segment_with_sam', methods=['POST'])
-def segment_with_sam(): 
+def segment_with_sam():
     try:
         data = request.json
         image_path = os.path.join('generated_images', os.path.basename(data['image_url']))
         
-        # Verify image exists
         if not os.path.exists(image_path):
             return jsonify({'error': 'Image file not found'}), 404
 
-        # Prepare the request to VM
         with open(image_path, 'rb') as img_file:
             image_bytes = img_file.read()
             image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-            response = requests.post(
-                f"{SAMVMURL}/segment",
-                json={
-                    'image_url': f"data:image/png;base64,{image_base64}",
-                    'input_points': data['input_points'],
-                    'input_labels': data['input_labels']
-                },
-                timeout=30
-            )
-
-        print(f"VM Response Status: {response.status_code}")
-        print(f"VM Response Content: {response.text}")
+        response = requests.post(
+            f"{SAMVMURL}/segment",
+            json={
+                'image_url': f"data:image/png;base64,{image_base64}",
+                'input_points': data['input_points'],
+                'input_labels': data['input_labels']
+            },
+            timeout=300
+        )
 
         if response.status_code != 200:
             return jsonify({
                 'error': 'SAM processing failed',
-                'vm_error': response.text
+                'details': response.text
             }), 500
 
-        vm_data = response.json()
-        if 'masks' not in vm_data:
-            return jsonify({
-                'error': 'No mask data in VM response',
-                'vm_response': vm_data
-            }), 500
-
-        return jsonify(vm_data)
+        return jsonify(response.json())
 
     except Exception as e:
-        return jsonify({
-            'error': str(e),
-            'type': type(e).__name__
-        }), 500
+        return jsonify({'error': str(e)}), 500
+    
+
 
 @app.route('/gemini', methods=['POST'])
 def gemini_iterate():
     data = request.json or {}
     prompt = data.get('prompt')
-    image_filename = data.get('image_filename')  # Will be None for first generation
+    image_filename = data.get('image_filename')  
     model = data.get('model', "gemini-2.0-flash-preview-image-generation")
     
     try:
