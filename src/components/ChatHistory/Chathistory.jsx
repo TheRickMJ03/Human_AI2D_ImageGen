@@ -19,14 +19,15 @@ const ChatHistory = ({ messages }) => {
   const [isLoadingLibraries, setIsLoadingLibraries] = useState(false);
   const isLoadingLibrariesRef = useRef(false); // Add this ref
 
-
+  
+  
   // Keep the ref in sync with state
   useEffect(() => {
     isLoadingLibrariesRef.current = isLoadingLibraries;
   }, [isLoadingLibraries]);
+  
 
-
-useEffect(() => {
+  useEffect(() => {
   // Reset 3D state when messages become empty (new chat)
   if (messages.length === 0) {
     setThreeDModel(null);
@@ -52,15 +53,15 @@ useEffect(() => {
 
 // Load Spark library dynamically
 useEffect(() => {
-  let renderer, scene, camera, animationId;
-
-  // Only setup once when we have a 3D model
+  let renderer, scene, camera, animationId,controls;
+  
   if (threeDModel && !isLoadingLibrariesRef.current) {
     const loadAndRender = async () => {
       setIsLoadingLibraries(true);
       setError(null);
-
+      
       try {
+        const { OrbitControls } =  await import('three/examples/jsm/controls/OrbitControls');
         const { SplatMesh } = await import('@sparkjsdev/spark');
         const THREE = await import('three');
 
@@ -69,58 +70,100 @@ useEffect(() => {
         const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
         if (!gl) throw new Error('WebGL not supported');
 
+        // Scene & camera
+        const container = document.getElementById('three-container');
         scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60, 400 / 400, 0.1, 1000);
+        camera = new THREE.PerspectiveCamera(60,  container.clientWidth / container.clientHeight , 0.1, 70);
 
-        renderer = new THREE.WebGLRenderer({
-          alpha: true,
-          antialias: true,
-          preserveDrawingBuffer: true
-        });
-        renderer.setSize(400, 400);
-        renderer.setClearColor(0x000000, 0);
-
+        // Lights
         scene.add(new THREE.AmbientLight(0x404040));
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-        directionalLight.position.set(1, 1, 1);
-        scene.add(directionalLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(1, 1, 1);
+        scene.add(dirLight);
 
+        // Load 3D model
         const blob = new Blob([threeDModel], { type: 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
-
+        let splatMesh;
         try {
-          const splatMesh = new SplatMesh({ url });
-          
-          // ✅ scale/center based on bbox (or fallback)
-          const bbox = segmentationData.bbox || {
-            minX: 0, minY: 0, maxX: 1, maxY: 1
-          };
-          const bboxWidth = bbox.maxX - bbox.minX;
-          const bboxHeight = bbox.maxY - bbox.minY;
-          const scaleFactor = Math.max(bboxWidth, bboxHeight) * 3;
-
-          splatMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
-          splatMesh.position.set(0, 0, -3);
-          scene.add(splatMesh);
+          splatMesh = new SplatMesh({ url });
         } finally {
           URL.revokeObjectURL(url);
         }
 
-        const container = document.getElementById('three-container');
-        if (container) {
-          container.innerHTML = '';
-          container.appendChild(renderer.domElement);
+        // Center and scale mesh based on 2D bbox and container size
+        const bbox = segmentationData.bbox || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+        const bboxWidth = bbox.maxX - bbox.minX;
+        const bboxHeight = bbox.maxY - bbox.minY;
 
-          const animate = () => {
-            animationId = requestAnimationFrame(animate);
-            if (scene && scene.children.length > 0) {
-              scene.children[0].rotation.y += 0.01;
-            }
-            renderer.render(scene, camera);
-          };
+        const containerSize = Math.min(container.clientWidth, container.clientHeight);
 
-          animate();
-        }
+                // More intelligent scaling that adapts to object size
+        const baseMultiplier = 0.5; // Adjust this as needed
+        const bboxInfluence = Math.max(bboxWidth, bboxHeight);
+
+        // Objects that occupy more screen space get slightly less scaling
+        let scaleFactor = containerSize * baseMultiplier * (1.2 - bboxInfluence * 0.5);
+
+        // Clamp scale factor to avoid extremely small or large models
+        const minScale = containerSize * 0.2;
+        const maxScale = containerSize * 0.9;
+        scaleFactor = Math.min(Math.max(scaleFactor, minScale), maxScale);
+
+        splatMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+        // Position mesh based on bbox center
+        const centerX = bbox.minX + bboxWidth / 2 - 0.5;
+        const centerY = 0.5 - (bbox.minY + bboxHeight / 2); // flip Y
+        const zPos = 0;
+        splatMesh.position.set(centerX, centerY, zPos);
+
+        scene.add(splatMesh);
+
+        
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(container.clientWidth, container.clientHeight, false);
+        renderer.setClearColor(0x000000, 0);
+        container.innerHTML = '';
+        container.appendChild(renderer.domElement);
+
+        // Camera setup
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        camera.position.set(0, 0, 70);
+        camera.lookAt(0, 0, 0);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; // Add smooth damping
+        controls.dampingFactor = 0.05; // Adjust damping intensity
+        controls.screenSpacePanning = false;
+        controls.minDistance = 10; // Optional: set min zoom distance
+        controls.maxDistance = 100; // Optional: set max zoom distance
+
+
+
+
+
+        // Animate
+       const animate = () => {
+        animationId = requestAnimationFrame(animate);
+        controls.update(); 
+        renderer.render(scene, camera);
+      };
+      animate();
+        // Resize handler
+        const handleResize = () => {
+          if (container) {
+            renderer.setSize(container.clientWidth, container.clientHeight, false);
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+          }
+        };
+        window.addEventListener('resize', handleResize);
+
       } catch (err) {
         console.error('Error loading 3D viewer:', err);
         setError(err.message || 'Failed to load 3D viewer');
@@ -134,22 +177,22 @@ useEffect(() => {
   }
 
   return () => {
-    // Only cleanup when component unmounts or model changes completely
-    // if (!threeDModel) {
-      if (animationId) cancelAnimationFrame(animationId);
-      if (renderer) {
-        try {
-          renderer.dispose();
-          renderer.forceContextLoss?.();
-        } catch (e) {
-          console.warn('Error disposing renderer:', e);
-        }
+    if (animationId) cancelAnimationFrame(animationId);
+    if (controls) controls.dispose(); 
+
+    if (renderer) {
+      try {
+        renderer.dispose();
+        renderer.forceContextLoss?.();
+      } catch (e) {
+        console.warn('Error disposing renderer:', e);
       }
-      const container = document.getElementById('three-container');
-      if (container) container.innerHTML = '';
     }
-  // };
+    const container = document.getElementById('three-container');
+    if (container) container.innerHTML = '';
+  };
 }, [threeDModel, segmentationData.bbox]);
+
 
 
 
@@ -180,9 +223,9 @@ useEffect(() => {
     setSegmentationData(prev => ({
       ...prev,
       imageUrl,
-      displayWidth,    // Store displayed dimensions
+      displayWidth,  
       displayHeight,
-      naturalWidth,    // Store natural dimensions
+      naturalWidth,  
       naturalHeight,
       points: newPoints,
       mask: null,
@@ -226,7 +269,7 @@ useEffect(() => {
       setSegmentationData(prev => ({
         ...prev,
         mask: visUrl,
-        maskData: bestMask.mask, // actual mask data for cropping
+        maskData: bestMask.mask,
 
         bbox: bestMask.bbox
       }));
@@ -242,7 +285,6 @@ useEffect(() => {
   const generate3DModel = async () => {
     
     if (!segmentationData.mask) return;
-    // setThreeDModel(null);
     setShow3DViewer(false);
     setIsGenerating3D(true);
     setError(null);
@@ -276,11 +318,7 @@ useEffect(() => {
       setThreeDModel(bytes.buffer.slice(0));
       setShow3DViewer(true);
        
-      
-      // const container = document.getElementById('three-container');
-      //   if (container) {
-      //     container.innerHTML = '';
-      //   }
+    
 
 
     } else if (result.ply_url) {
@@ -294,7 +332,7 @@ useEffect(() => {
       const plyArrayBuffer = await plyBlob.arrayBuffer();
 
       
-    setThreeDModel(plyArrayBuffer.slice(0));
+      setThreeDModel(plyArrayBuffer.slice(0));
       setShow3DViewer(true);
       // Force re-render of 3D viewer
        const container = document.getElementById('three-container');
@@ -374,11 +412,10 @@ useEffect(() => {
             width: `${((segmentationData.bbox?.maxX ?? 1) - (segmentationData.bbox?.minX ?? 0)) * 100}%`,
             height: `${((segmentationData.bbox?.maxY ?? 1) - (segmentationData.bbox?.minY ?? 0)) * 100}%`,
             zIndex: 10,
-            pointerEvents: 'none',
             borderRadius: '8px',
             overflow: 'hidden',
             transform: 'translateZ(0)',
-            display: show3DViewer ? 'block' : 'none' // ← This controls visibility
+            display: show3DViewer ? 'block' : 'none' 
           }}
         ></div>
       )}
