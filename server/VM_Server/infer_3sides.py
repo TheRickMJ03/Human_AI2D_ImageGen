@@ -101,6 +101,9 @@ def process_image():
 
             # Process the image
             ply_path = process(opt, image_path, tmpdir)
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
 
             if not os.path.exists(ply_path):
                 return jsonify({'error': 'PLY file not generated'}), 500
@@ -118,6 +121,8 @@ def process_image():
             })
 
     except Exception as e:
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
         return jsonify({'error': str(e)}), 500
 
 # process function

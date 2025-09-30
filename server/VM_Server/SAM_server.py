@@ -23,6 +23,7 @@ sam2_checkpoint = "/home/ram227_njit_edu/SAM/sam2/checkpoints/sam2.1_hiera_large
 model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+
 # Load SAM model
 try:
     sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=device)
@@ -31,6 +32,8 @@ try:
 
 except Exception as e:
     raise
+
+
 
 
 @app.route('/segment', methods=['POST'])
@@ -96,12 +99,28 @@ def segment_with_sam():
             mask_img.save(mask_buffer, format="PNG")
             mask_base64 = base64.b64encode(mask_buffer.getvalue()).decode("utf-8")
 
-            # Response
+
+
+
+
+
+
+            ys, xs = np.where(mask == 1)
+            if len(xs) > 0 and len(ys) > 0:
+                bbox = {
+                    "minX": int(xs.min())/ width,
+                    "minY": int(ys.min())/height,
+                    "maxX": int(xs.max())/width,
+                    "maxY": int(ys.max())/height
+                }
+            else:
+                bbox = None
+
             mask_data.append({
                 "score": float(score),
                 "mask": mask_base64,
                 "visualization": vis_base64,
-          
+                "bbox": bbox  # NEW
             })
 
         return jsonify({
@@ -123,4 +142,5 @@ def segment_with_sam():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, threaded=True)
+
 

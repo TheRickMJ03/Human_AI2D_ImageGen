@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './ChatHistory.css';
+import TextMessage from "./TextMessage";
+import ImageMessage from "./ImageMessage";
 
 const ChatHistory = ({ messages }) => {
   const chatEndRef = useRef(null);
@@ -13,26 +15,13 @@ const ChatHistory = ({ messages }) => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [isGenerating3D, setIsGenerating3D] = useState(false);
-  const [threeDModel, setThreeDModel] = useState(null);
-  const [show3DViewer, setShow3DViewer] = useState(false);
-  const [isLoadingLibraries, setIsLoadingLibraries] = useState(false);
-  const isLoadingLibrariesRef = useRef(false); // Add this ref
+
 
   
-  
-  // Keep the ref in sync with state
-  useEffect(() => {
-    isLoadingLibrariesRef.current = isLoadingLibraries;
-  }, [isLoadingLibraries]);
-  
+
 
   useEffect(() => {
-  // Reset 3D state when messages become empty (new chat)
   if (messages.length === 0) {
-    setThreeDModel(null);
-    setShow3DViewer(false);
-    setIsGenerating3D(false);
     setSegmentationData({
       imageUrl: null,
       points: [],
@@ -49,149 +38,6 @@ const ChatHistory = ({ messages }) => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-
-
-// Load Spark library dynamically
-useEffect(() => {
-  let renderer, scene, camera, animationId,controls;
-  
-  if (threeDModel && !isLoadingLibrariesRef.current) {
-    const loadAndRender = async () => {
-      setIsLoadingLibraries(true);
-      setError(null);
-      
-      try {
-        const { OrbitControls } =  await import('three/examples/jsm/controls/OrbitControls');
-        const { SplatMesh } = await import('@sparkjsdev/spark');
-        const THREE = await import('three');
-
-        // WebGL check
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (!gl) throw new Error('WebGL not supported');
-
-        // Scene & camera
-        const container = document.getElementById('three-container');
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(60,  container.clientWidth / container.clientHeight , 0.1, 70);
-
-        // Lights
-        scene.add(new THREE.AmbientLight(0x404040));
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
-        dirLight.position.set(1, 1, 1);
-        scene.add(dirLight);
-
-        // Load 3D model
-        const blob = new Blob([threeDModel], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        let splatMesh;
-        try {
-          splatMesh = new SplatMesh({ url });
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-
-        // Center and scale mesh based on 2D bbox and container size
-        const bbox = segmentationData.bbox || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-        const bboxWidth = bbox.maxX - bbox.minX;
-        const bboxHeight = bbox.maxY - bbox.minY;
-
-        const containerSize = Math.min(container.clientWidth, container.clientHeight);
-
-                // More intelligent scaling that adapts to object size
-        const baseMultiplier = 0.5; // Adjust this as needed
-        const bboxInfluence = Math.max(bboxWidth, bboxHeight);
-
-        // Objects that occupy more screen space get slightly less scaling
-        let scaleFactor = containerSize * baseMultiplier * (1.2 - bboxInfluence * 0.5);
-
-        // Clamp scale factor to avoid extremely small or large models
-        const minScale = containerSize * 0.2;
-        const maxScale = containerSize * 0.9;
-        scaleFactor = Math.min(Math.max(scaleFactor, minScale), maxScale);
-
-        splatMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
-
-        // Position mesh based on bbox center
-        const centerX = bbox.minX + bboxWidth / 2 - 0.5;
-        const centerY = 0.5 - (bbox.minY + bboxHeight / 2); // flip Y
-        const zPos = 0;
-        splatMesh.position.set(centerX, centerY, zPos);
-
-        scene.add(splatMesh);
-
-        
-
-        // Renderer
-        renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize(container.clientWidth, container.clientHeight, false);
-        renderer.setClearColor(0x000000, 0);
-        container.innerHTML = '';
-        container.appendChild(renderer.domElement);
-
-        // Camera setup
-        camera.aspect = container.clientWidth / container.clientHeight;
-        camera.updateProjectionMatrix();
-        camera.position.set(0, 0, 70);
-        camera.lookAt(0, 0, 0);
-
-        controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true; // Add smooth damping
-        controls.dampingFactor = 0.05; // Adjust damping intensity
-        controls.screenSpacePanning = false;
-        controls.minDistance = 10; // Optional: set min zoom distance
-        controls.maxDistance = 100; // Optional: set max zoom distance
-
-
-
-
-
-        // Animate
-       const animate = () => {
-        animationId = requestAnimationFrame(animate);
-        controls.update(); 
-        renderer.render(scene, camera);
-      };
-      animate();
-        // Resize handler
-        const handleResize = () => {
-          if (container) {
-            renderer.setSize(container.clientWidth, container.clientHeight, false);
-            camera.aspect = container.clientWidth / container.clientHeight;
-            camera.updateProjectionMatrix();
-          }
-        };
-        window.addEventListener('resize', handleResize);
-
-      } catch (err) {
-        console.error('Error loading 3D viewer:', err);
-        setError(err.message || 'Failed to load 3D viewer');
-        setShow3DViewer(false);
-      } finally {
-        setIsLoadingLibraries(false);
-      }
-    };
-
-    loadAndRender();
-  }
-
-  return () => {
-    if (animationId) cancelAnimationFrame(animationId);
-    if (controls) controls.dispose(); 
-
-    if (renderer) {
-      try {
-        renderer.dispose();
-        renderer.forceContextLoss?.();
-      } catch (e) {
-        console.warn('Error disposing renderer:', e);
-      }
-    }
-    const container = document.getElementById('three-container');
-    if (container) container.innerHTML = '';
-  };
-}, [threeDModel, segmentationData.bbox]);
 
 
 
@@ -282,76 +128,6 @@ useEffect(() => {
     }
   };
 
-  const generate3DModel = async () => {
-    
-    if (!segmentationData.mask) return;
-    setShow3DViewer(false);
-    setIsGenerating3D(true);
-    setError(null);
-
-    try {
-      const response = await fetch('http://localhost:5000/generate_3d_direct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_url: segmentationData.imageUrl,
-          mask_data: segmentationData.maskData
-        })
-      });
-
-      const result = await response.json();
-      if (result.error) {
-        throw new Error(result.error);
-      }
-
-
-    // Check if we received PLY data directly or need to fetch it
-    if (result.ply_data) {
-      // Convert base64 PLY data to ArrayBuffer
-      const binaryString = window.atob(result.ply_data);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      
-      setThreeDModel(bytes.buffer.slice(0));
-      setShow3DViewer(true);
-       
-    
-
-
-    } else if (result.ply_url) {
-      // If server returns a URL to the PLY file, fetch it
-      const plyResponse = await fetch(`http://localhost:5000${result.ply_url}`);
-      if (!plyResponse.ok) {
-        throw new Error(`Failed to fetch PLY file: ${plyResponse.status}`);
-      }
-      
-      const plyBlob = await plyResponse.blob();
-      const plyArrayBuffer = await plyBlob.arrayBuffer();
-
-      
-      setThreeDModel(plyArrayBuffer.slice(0));
-      setShow3DViewer(true);
-      // Force re-render of 3D viewer
-       const container = document.getElementById('three-container');
-       if (container) {
-         container.innerHTML = '';
-       }
-    } else {
-      throw new Error('No PLY data or URL received from server');
-    }
-
-  } catch (error) {
-    console.error("3D generation error:", error);
-    setError(error.message || 'Unknown error during 3D generation');
-  } finally {
-    setIsGenerating3D(false);
-  }
-};
-
-
   const clearSegmentation = () => {
     setSegmentationData({
       imageUrl: null,
@@ -363,156 +139,24 @@ useEffect(() => {
   };
 
 
-
-
-
-
   return (
     <div className="chat-history">
       {[...messages].reverse().map((msg, index) => (
         <div key={`${index}-${msg.timestamp}`} className={`bubble ${msg.role}`}>
           {msg.type === 'text' ? (
-            <p>{msg.content}</p>
+            <TextMessage content={msg.content} />
+
           ) : (
-            <div className="image-message">
-              {loading && segmentationData.imageUrl === msg.content && (
-                <div className="segmentation-loading">Processing segmentation...</div>
-              )}
-              {error && segmentationData.imageUrl === msg.content && (
-                <div className="segmentation-error">{error}</div>
-              )}
-              
-              <div className="image-container">
-           <img
-            src={`http://localhost:5000${msg.content.startsWith('/') ? msg.content : `/${msg.content}`}`}
-            alt={msg.prompt || 'Generated image'}
-            onClick={(e) => handleImageClick(e, msg.content)}
-            onLoad={(e) => {
-              const img = e.target;
-              const rect = img.getBoundingClientRect();
-              setSegmentationData(prev => ({
-                ...prev,
-                displayWidth: rect.width,
-                displayHeight: rect.height,
-                naturalWidth: img.naturalWidth,
-                naturalHeight: img.naturalHeight
-              }));
-            }}
+          <ImageMessage
+            msg={msg}
+            segmentationData={segmentationData}
+            setSegmentationData={setSegmentationData}
+            loading={loading}
+            error={error}
+            handleImageClick={handleImageClick}
+            clearSegmentation={clearSegmentation}
+            setError={setError}
           />
-
-
-                 {/* 3D Viewer Overlay */}
-      {threeDModel && segmentationData.imageUrl && (
-        <div
-          id="three-container"
-          style={{
-            position: 'absolute',
-            top: `${(segmentationData.bbox?.minY ?? 0) * 100}%`,
-            left: `${(segmentationData.bbox?.minX ?? 0) * 100}%`,
-            width: `${((segmentationData.bbox?.maxX ?? 1) - (segmentationData.bbox?.minX ?? 0)) * 100}%`,
-            height: `${((segmentationData.bbox?.maxY ?? 1) - (segmentationData.bbox?.minY ?? 0)) * 100}%`,
-            zIndex: 10,
-            borderRadius: '8px',
-            overflow: 'hidden',
-            transform: 'translateZ(0)',
-            display: show3DViewer ? 'block' : 'none' 
-          }}
-        ></div>
-      )}
-
-
-                
-            {/* Segmentation Mask Container (only show when 3D is not visible) */}
-            {segmentationData.mask && !show3DViewer && (
-                  <img
-                    src={segmentationData.mask}
-                    alt="Segmentation result"
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      height: '100%',
-                      pointerEvents: 'none',
-                      opacity: 0.7
-                    }}
-                  />
-                )}
-                
-                 {/* Segmentation Points (only show when 3D is not visible) */}
-              {segmentationData.imageUrl === msg.content && !show3DViewer && (
-                segmentationData.points.map((point, i) => (
-                  <div
-                    key={i}
-                    className="segmentation-point"
-                    style={{
-                      left: `${point.x * 100}%`,
-                      top: `${point.y * 100}%`,
-                    }}
-                  />
-                ))
-              )}
-                
-                 {/* Control Buttons */}
-              {segmentationData.imageUrl === msg.content && (
-                <div className="segmentation-controls">
-                  <div className="points-count">
-                    Points: {segmentationData.points.length}
-                  </div>
-                  <button 
-                    className="generate-3d-btn"
-                    onClick={generate3DModel}
-                    disabled={isGenerating3D || !segmentationData.mask}
-                  >
-                    {isGenerating3D ? 'Generating 3D...' : 'Generate 3D'}
-                  </button>
-                  
-                  {/* Toggle 3D View Button */}
-                  {threeDModel && (
-                    <button 
-                      className="toggle-3d-btn"
-                      onClick={() => setShow3DViewer(!show3DViewer)}
-                    >
-                      {show3DViewer ? 'Hide 3D' : 'Show 3D'}
-                    </button>
-                  )}
-                  
-                  <button 
-                    className="clear-segmentation-btn"
-                    onClick={clearSegmentation}
-                  >
-                    Clear
-                  </button>
-                </div>
-              )}
-                
-               {/* 3D Generation Overlay */}
-              {isGenerating3D && segmentationData.imageUrl === msg.content && (
-                <div className="generating-3d-overlay">
-                  <div className="generating-3d-text">Generating 3D model...</div>
-                </div>
-              )}
-              
-              {/* Clear Button */}
-              {segmentationData.imageUrl === msg.content && (
-                <button 
-                  className="clear-segmentation" 
-                  onClick={clearSegmentation}
-                  title="Clear segmentation"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-
-            
-              {msg.prompt && <div className="image-prompt">{msg.prompt}</div>}
-              {msg.timestamp && (
-                <div className="image-timestamp">
-                  {new Date(msg.timestamp).toLocaleString()}
-                </div>
-              )}
-            </div>
           )}
         </div>
       ))}

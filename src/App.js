@@ -169,10 +169,10 @@ return (
             </CSSTransition>
           )}
         <div 
-          key={forceReset}  
           className={`content-container ${!showTitle ? 'content-expand' : ''}`}
-        >
+          >
           <ImageGenerator 
+            key={forceReset}  
             onGenerate={handleGenerate}
             selectedModel={selectedModel} 
             currentImage={currentImage}

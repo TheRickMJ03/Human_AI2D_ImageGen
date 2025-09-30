@@ -1,31 +1,44 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
+# === Node.js ===
+node_modules/
+.pnp/
 .pnp.js
 
-# testing
+# === React ===
+/build
 /coverage
 
-# production
-/build
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+env/
 
+# === Editor/IDE ===
+.vscode/
+.idea/
+
+# === Generated AI Assets ===
 /server/3d_models/
 /server/generated_images/
 /server/segmented_images/
 
-# misc
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# === Environment Variables & Secrets ===
 .env
+.env.*
 server/.env
 server/sa_key.json
 
+# === OS-specific ===
+.DS_Store
+Thumbs.db
+
+# === Logs ===
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
+
 

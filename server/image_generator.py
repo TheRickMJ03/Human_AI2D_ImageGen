@@ -31,7 +31,7 @@ HF_TOKEN = os.getenv("HF_API_TOKEN")
 MODEL_NAME = "black-forest-labs/FLUX.1-schnell"
 INFERENCE_PROVIDER = "together"
 GCP_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
-
+VM_KEY = os.getenv("VM_IP_ADDRESS")
 
 hf_client = InferenceClient(
     provider=INFERENCE_PROVIDER,
@@ -118,8 +118,8 @@ def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-ima
         app.logger.error(f"Gemini generation error: {str(e)}", exc_info=True)
         raise
     
-SAMVMURL = "http://34.60.140.129:5000"
-VM_3D_SERVER_URL = "http://34.60.140.129:5001"
+SAMVMURL = f"http://{VM_KEY}:5000"
+VM_3D_SERVER_URL = f"http://{VM_KEY}:5001"
 def upload_to_vm(filepath, metadata=None):
     try:
         url = "{SAMVMURL}/upload"
@@ -142,13 +142,13 @@ def generate_3d_direct():
     try:
         data = request.json
         image_url = data['image_url']
-        mask_data = data['mask_data']
+        mask_data = data['mask_data']  # This is the actual mask data
 
         # Extract filename from URL
         image_filename = os.path.basename(image_url)
         image_path = os.path.join('generated_images', image_filename)
         
-        # Verify files exist
+        # Verify image exists
         if not os.path.exists(image_path):
             return jsonify({'error': 'Image file not found'}), 404
         
@@ -156,58 +156,70 @@ def generate_3d_direct():
         with open(image_path, 'rb') as f:
             original_image = Image.open(f).convert('RGBA')
         
-        # Decode mask
-        mask_bytes = base64.b64decode(mask_data.split(',')[-1] if ',' in mask_data else mask_data)
+        # Decode mask (base64 string)
+        if ',' in mask_data:
+            mask_data = mask_data.split(',')[-1]
+            
+        mask_bytes = base64.b64decode(mask_data)
         mask_image = Image.open(BytesIO(mask_bytes)).convert('L')
         
         # Ensure mask matches image size
         if mask_image.size != original_image.size:
             mask_image = mask_image.resize(original_image.size, Image.LANCZOS)
         
-        # Apply mask to original image
-        original_image.putalpha(mask_image)
+        # Create isolated image with only the masked area
+        isolated_image = Image.new('RGBA', original_image.size, (0, 0, 0, 0))
+        isolated_image.paste(original_image, (0, 0), mask_image)
         
-        # Crop to bounding box
-        bbox = original_image.getbbox()
+        # Crop to bounding box of the non-transparent pixels
+        bbox = isolated_image.getbbox()
         if not bbox:
             return jsonify({'error': 'No object found in mask'}), 400
             
-        cropped = original_image.crop(bbox)
+        cropped = isolated_image.crop(bbox)
         
-        # Resize and pad to 256x256
-        cropped.thumbnail((256, 256), Image.LANCZOS)
-        padded = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
-        x = (256 - cropped.width) // 2
-        y = (256 - cropped.height) // 2
-        padded.paste(cropped, (x, y))
+        # Resize to 256x256 while maintaining aspect ratio
+        width, height = cropped.size
+        scale = min(256/width, 256/height)
+        new_width = int(width * scale)
+        new_height = int(height * scale)
         
+        resized = cropped.resize((new_width, new_height), Image.LANCZOS)
+        
+        # Create 256x256 canvas with transparent background
+        final_image = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+        
+        # Center the resized image
+        x = (256 - new_width) // 2
+        y = (256 - new_height) // 2
+        final_image.paste(resized, (x, y))
+        
+
+        final_image.save('debuggg.png')
         # Convert to base64
         buffer = BytesIO()
-        padded.save(buffer, format='PNG')
+        final_image.save(buffer, format='PNG', optimize=True)
         final_image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
-        # Send DIRECTLY to 3D server
-        print(f"Connecting to  {VM_3D_SERVER_URL}/process")
-
+        # Send to 3D server
+        print(f"Sending cropped image to {VM_3D_SERVER_URL}/process")
+        
         response = requests.post(
             f"{VM_3D_SERVER_URL}/process",  
             json={"image": f"data:image/png;base64,{final_image_base64}"},
             timeout=300
         )
+        
         # Save the returned PLY data locally
         if response.status_code == 200:
             ply_data = response.json().get('ply_data')
             if ply_data:
-                # Create 3D models directory
                 os.makedirs('3d_models', exist_ok=True)
-                
-                # Save locally
                 filename = f"3d_model_{int(time.time())}.ply"
                 filepath = os.path.join('3d_models', filename)
                 
                 with open(filepath, 'wb') as f:
                     f.write(base64.b64decode(ply_data))
-
 
         if response.status_code != 200:
             return jsonify({
@@ -219,8 +231,7 @@ def generate_3d_direct():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
+    
 #SAM Endpoint
 @app.route('/segment_with_sam', methods=['POST'])
 def segment_with_sam():
