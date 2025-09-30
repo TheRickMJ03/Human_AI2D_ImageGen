@@ -7,6 +7,9 @@
 ## ✨ Overview  
 
 **Human_AI2D_ImageGen** is a locally hosted, full-stack web application for **AI-powered image generation, editing, segmentation, and 3D reconstruction**.  
+## Demo
+https://github.com/user-attachments/assets/877e4470-c291-4677-8778-37b9660afa4e
+
 
 It integrates **external AI providers** with **VM-hosted machine learning models** into one workflow:  
 
@@ -274,3 +277,7 @@ POST /generate_3d_direct
 - Requires **GPU-accelerated VM** for SAM2 + LGM.  
 - Cloud APIs (OpenAI, Hugging Face, Google) need active tokens/credentials.  
 - All generated assets are **timestamped** for reproducibility.  
+
+### 🚧 Work in Progress  
+- **Reset feature:** A button to re-align the 3D object perfectly over the 2D image (including position and rotation).  
+- **Improvement 1:** Adjusting the size and initial placement of the `.ply` file so that the 3D object (e.g., hat) matches the scale and position of the corresponding 2D object.  
