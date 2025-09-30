@@ -281,3 +281,7 @@ POST /generate_3d_direct
 ### 🚧 Work in Progress  
 - **Reset feature:** A button to re-align the 3D object perfectly over the 2D image (including position and rotation).  
 - **Improvement 1:** Adjusting the size and initial placement of the `.ply` file so that the 3D object (e.g., hat) matches the scale and position of the corresponding 2D object.  
+
+### 🚧 Work in Progress  
+- **Reset feature:** A button to re-align the 3D object perfectly over the 2D image (including position and rotation).  
+- **Improvement 1:** Adjusting the size and initial placement of the `.ply` file so that the 3D object (e.g., hat) matches the scale and position of the corresponding 2D object.  
