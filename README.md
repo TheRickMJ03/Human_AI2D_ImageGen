@@ -9,8 +9,8 @@
 **Human_AI2D_ImageGen** is a loccally hosted, full-stack web application for **AI-powered image generation, editing, segmentation, and 3D reconstruction**.  
 ## Demo
 
-https://github.com/user-attachments/assets/cf96ba87-4181-4d00-b77c-0ca3c3a11b20
 
+<video src="https://github.com/user-attachments/assets/cf96ba87-4181-4d00-b77c-0ca3c3a11b20" width="352" height="720"></video>
 
 
 It integrates **external AI providers** with **VM-hosted machine learning models** into one workflow:  
