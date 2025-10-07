@@ -46,12 +46,7 @@
 }
 
 
-/* Base Image Styling */
-.image-container {
-  position: relative;
-  display: inline-block;
-  line-height: 0; 
-}
+
 
 
 .generating-3d-text {

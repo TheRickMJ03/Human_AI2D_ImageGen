@@ -42,3 +42,6 @@ yarn-error.log*
 *.log
 
 
+#virtual enviroment 
+server/myenv
+server/debuggg.png

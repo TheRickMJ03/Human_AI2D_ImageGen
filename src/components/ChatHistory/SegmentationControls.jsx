@@ -8,7 +8,8 @@ const SegmentationControls = ({
   threeDModel,
   show3DViewer,
   setShow3DViewer,
-  isGenerating3D
+  isGenerating3D,
+  resetViewRef
 }) => {
   return (
     <div className="segmentation-controls">
@@ -30,6 +31,15 @@ const SegmentationControls = ({
           onClick={() => setShow3DViewer(!show3DViewer)}
         >
           {show3DViewer ? "Hide 3D" : "Show 3D"}
+        </button>
+      )}
+
+      {show3DViewer && (
+        <button
+          className="reset-view-btn"
+          onClick={() => resetViewRef.current && resetViewRef.current()}
+        >
+          Reset View
         </button>
       )}
 

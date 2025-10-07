@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import SegmentationControls from "./SegmentationControls";
 import SegmentationOverlay from "./SegmentationOverlay";
 import ThreeDViewer from "./3Dviewer"
 import "./ImageMessage.css"
+
 const ImageMessage = ({
-    msg,
+  msg,
   segmentationData,
   setSegmentationData,
   loading,
@@ -13,12 +14,13 @@ const ImageMessage = ({
   clearSegmentation,
   setError
 }) => {
-
   const [isGenerating3D, setIsGenerating3D] = useState(false);
   const [threeDModel, setThreeDModel] = useState(null);
   const [show3DViewer, setShow3DViewer] = useState(false);
-
   
+  // Add this ref to store the reset view function
+  const resetViewRef = useRef(null);
+
   const generate3DModel = async () => {
     if (!segmentationData.maskData) {
       setError("No mask data available");
@@ -74,12 +76,8 @@ const ImageMessage = ({
     }
   };
 
-
-
   return (
     <div className="image-message">
-  
-
       <div className="image-container">
         <img
           src={`http://localhost:5000${
@@ -101,32 +99,29 @@ const ImageMessage = ({
         />
 
         {threeDModel && segmentationData.imageUrl && (
-      <ThreeDViewer
-        threeDModel={threeDModel}
-        bboxs={segmentationData.bbox}
-          imageDisplaySize={{
-          width: segmentationData.displayWidth, 
-          height: segmentationData.displayHeight,
-          offsetX: segmentationData.offsetX,
-          offsetY: segmentationData.offsetY,
-        }}
-        show3DViewer={show3DViewer}
-        setShow3DViewer={setShow3DViewer}
-        setError={setError}
-      />
-  
-    )}
+          <ThreeDViewer
+            threeDModel={threeDModel}
+            bboxs={segmentationData.bbox}
+            imageDisplaySize={{
+              width: segmentationData.displayWidth, 
+              height: segmentationData.displayHeight,
+              offsetX: segmentationData.offsetX,
+              offsetY: segmentationData.offsetY,
+            }}
+            show3DViewer={show3DViewer}
+            setShow3DViewer={setShow3DViewer}
+            setError={setError}
+            resetViewRef={resetViewRef} // Pass the ref to ThreeDViewer
+          />
+        )}
 
         <SegmentationOverlay
-        msg={msg}
-        segmentationData={segmentationData}
-        error={error}
-        loading={loading}
-        show3DViewer={show3DViewer}
+          msg={msg}
+          segmentationData={segmentationData}
+          error={error}
+          loading={loading}
+          show3DViewer={show3DViewer}
         />
-
-
-        
 
         {/* 3D Generation Overlay */}
         {isGenerating3D && segmentationData.imageUrl === msg.content && (
@@ -138,9 +133,9 @@ const ImageMessage = ({
         {/* Clear Button */}
         {segmentationData.imageUrl === msg.content && (
           <button
-          className="clear-segmentation"
-          onClick={clearSegmentation}
-          title="Clear segmentation"
+            className="clear-segmentation"
+            onClick={clearSegmentation}
+            title="Clear segmentation"
           >
             ×
           </button>
@@ -149,7 +144,7 @@ const ImageMessage = ({
 
       {/* Control Buttons */}
       {segmentationData.imageUrl === msg.content && (
-      <SegmentationControls
+        <SegmentationControls
           segmentationData={segmentationData}
           generate3DModel={generate3DModel}
           clearSegmentation={clearSegmentation}
@@ -157,9 +152,9 @@ const ImageMessage = ({
           show3DViewer={show3DViewer}
           setShow3DViewer={setShow3DViewer}
           isGenerating3D={isGenerating3D}
-      />
+          resetViewRef={resetViewRef} // Pass the ref to SegmentationControls
+        />
       )}
-
 
       {msg.prompt && <div className="image-prompt">{msg.prompt}</div>}
       {msg.timestamp && (

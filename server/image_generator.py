@@ -13,8 +13,6 @@ import requests
 from google.oauth2 import service_account
 import google.auth.transport.requests
 from google import genai
-from google.genai import types
-from google.genai.types import GenerateContentConfig, Modality
 import numpy as np
 from PIL import Image
 from io import BytesIO
@@ -61,61 +59,63 @@ def get_access_token_from_service_account():
 
 
 
-def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-image-generation"):
+def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-001"):
     try:
+        from google.genai import types
         contents = []
-        
+
+
         if image_filename:
             image_path = os.path.join("generated_images", image_filename)
-            # Verify file exists
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image file {image_path} not found")
-            
-            try:
-                
-                # Open and verify image
-                image = Image.open(image_path)
-                image.verify()  # Verify without loading
-                image = Image.open(image_path)  # Reopen after verify
-                
-                contents.append(image)#previous image is passed along with the new prompt
-            except Exception as e:
-                app.logger.error(f"Image loading error: {str(e)}")
-                raise Exception(f"Could not load image: {str(e)}")
+
+
+            image = Image.open(image_path)
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            buffer.seek(0)
+
+
+            image_part = types.Part.from_bytes(
+                data=buffer.getvalue(),
+                mime_type="image/png",
+            )
+            contents.append(image_part)
+
 
         contents.append(prompt)
-        
-        config = GenerateContentConfig(
-            response_modalities=[Modality.TEXT, Modality.IMAGE],
-            candidate_count=1
+
+
+        config = types.GenerateContentConfig(
+                response_modalities=["Text", "Image"],
+                candidate_count=1,
         )
-        
         response = client.models.generate_content(
             model=model,
             contents=contents,
-            config=config
+            config=config,
         )
-        
-        # Process the multimodal response
-        text_response = ""
+
+
+        text_response = response.text or ""
         image_bytes = None
-        
+
+
         for part in response.candidates[0].content.parts:
-            if hasattr(part, "text") and part.text:
-                text_response = part.text
-            elif hasattr(part, "inline_data") and part.inline_data:
+            if hasattr(part, "inline_data") and part.inline_data:
                 image_bytes = part.inline_data.data
-                
+
+
         if not image_bytes:
             raise Exception("No image data found in response")
-            
-        return {
-            "image_bytes": image_bytes,
-            "text_response": text_response
-        }
-        
+
+
+        return {"image_bytes": image_bytes, "text_response": text_response}
+
+
     except Exception as e:
-        app.logger.error(f"Gemini generation error: {str(e)}", exc_info=True)
+        app.logger.error(f"Gemini generation error: {e}", exc_info=True)
         raise
     
 SAMVMURL = f"http://{VM_KEY}:5000"
@@ -271,42 +271,46 @@ def segment_with_sam():
 
 @app.route('/gemini', methods=['POST'])
 def gemini_iterate():
-    data = request.json or {}
-    prompt = data.get('prompt')
-    image_filename = data.get('image_filename')  
-    model = data.get('model', "gemini-2.0-flash-preview-image-generation")
-    
-    try:
-        result = call_gemini(prompt, image_filename, model)
+        data = request.json or {}
+        prompt = data.get('prompt')
+        image_filename = data.get('image_filename')
+        model = data.get('model', "gemini-2.0-flash-001")
+
+
+        try:
+            result = call_gemini(prompt, image_filename, model)
+
+
+            timestamp = int(time.time())
+            safe_prompt = "".join(c for c in prompt if c.isalnum() or c in (' ', '_')).rstrip()
+            safe_prompt = safe_prompt[:50].replace(" ", "_")
+            new_filename = f"{safe_prompt}__{timestamp}_{uuid.uuid4().hex[:4]}.png"
+            new_path = os.path.join("generated_images", new_filename)
+
+
+            with open(new_path, 'wb') as f:
+                f.write(result['image_bytes'])
+
+
+            response_data = {
+                'id': str(uuid.uuid4()),
+                'filename': new_filename,
+                'url': f"/generated_images/{new_filename}",
+                'prompt': prompt,
+                'description': result.get('text_response', ''),
+                'timestamp': timestamp * 1000,
+                'model': model
+            }
+
+
+            socketio.emit('new_image', response_data)
+            return jsonify(response_data)
+
+
+        except Exception as e:
+            app.logger.error(f"Error in gemini_iterate: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
         
-        # Generate consistent filename format
-        timestamp = int(time.time())
-        safe_prompt = "".join(c for c in prompt if c.isalnum() or c in (' ', '_')).rstrip()
-        safe_prompt = safe_prompt[:50].replace(" ", "_")  
-        new_filename = f"{safe_prompt}__{timestamp}_{uuid.uuid4().hex[:4]}.png"
-        new_path = os.path.join("generated_images", new_filename)
-        
-        # Save new image
-        with open(new_path, 'wb') as f:
-            f.write(result['image_bytes'])
-        
-        response_data = {
-            'id': str(uuid.uuid4()),
-            'filename': new_filename,
-            'url': f"/generated_images/{new_filename}",
-            'prompt': prompt,
-            'description': result.get('text_response', ''),
-            'timestamp': timestamp * 1000,
-            'model': model
-        }
-        
-        socketio.emit('new_image', response_data)
-        return jsonify(response_data)
-        
-    except Exception as e:
-        app.logger.error(f"Error in gemini_iterate: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-    
 
 
 def call_google_imagen_api(prompt, model_id="imagen-4.0-generate-preview-06-06"):
