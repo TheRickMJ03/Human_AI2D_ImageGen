@@ -5,10 +5,12 @@
   left: 0;
   width: 100% !important;
   height: 100% !important;
-  z-index: 10000 !important; /* bump higher than image */
+  z-index: 10000 !important; 
   pointer-events: auto;
 }
 #three-container canvas {
   position: relative;
-  z-index: 10001; /* ensure canvas sits on top */
+  z-index: 10001; 
+  width: 100%;
+  height: 100%;
 }

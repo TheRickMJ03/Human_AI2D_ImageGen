@@ -154,7 +154,7 @@ def process(opt: Options, path, output_dir=None):
 
     mv_images = []
     mv_images = pipe('', image, guidance_scale=5.0, num_inference_steps=30)
-    mv_image = np.stack([mv_images[0], mv_images[1], mv_images[2], mv_images[3]], axis=0)  # [4, H, W, 3]
+    mv_image = np.stack([mv_images[1], mv_images[2], mv_images[3], mv_images[0]], axis=0)
 
     # generate gaussians
     input_image = torch.from_numpy(mv_image).permute(0, 3, 1, 2).float().to(device) # [4, 3, 256, 256]

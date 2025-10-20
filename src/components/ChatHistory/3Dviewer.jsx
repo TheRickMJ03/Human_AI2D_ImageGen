@@ -203,8 +203,7 @@ const ThreeDViewer = ({ threeDModel, bboxs, imageDisplaySize, show3DViewer, setS
 
           splatMesh.scale.set(objectScale, objectScale, objectScale);
           splatMesh.position.set(positionX, positionY, 0);
-            // For example, rotate -180° around Y
-          splatMesh.rotation.y = 0; // -180° in radians
+          splatMesh.rotation.y = 0; 
 
           // Save original state for reset
           const initialState = {
