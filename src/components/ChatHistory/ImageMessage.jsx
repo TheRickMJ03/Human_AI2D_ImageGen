@@ -101,7 +101,6 @@ const ImageMessage = ({
           alt={msg.prompt || "Generated image"}
           onClick={!show3DViewer ? (e) => handleImageClick(e, msg.content) : undefined}
           style={show3DViewer ? { cursor: 'default' } : {}}
-          // THE FIX IS HERE: Only attach onLoad when the 3D viewer is NOT visible.
           onLoad={!show3DViewer ? (e) => {
             const img = e.target;
             const rect = img.getBoundingClientRect();
@@ -132,15 +131,15 @@ const ImageMessage = ({
           />
         )}
 
-        {!show3DViewer && (
-          <SegmentationOverlay
-            msg={msg}
-            segmentationData={segmentationData}
-            error={error}
-            loading={loading}
-            show3DViewer={show3DViewer}
-          />
-        )}
+          {segmentationData.imageUrl === msg.content && !show3DViewer && (
+            <SegmentationOverlay
+              msg={msg}
+              segmentationData={segmentationData}
+              error={error}
+              loading={loading}
+              show3DViewer={show3DViewer}
+            />
+          )}
 
         {isGenerating3D && segmentationData.imageUrl === msg.content && (
           <div className="generating-3d-overlay">

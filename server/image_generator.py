@@ -310,7 +310,34 @@ def transform_to_3d_alive():
 
         # Extract the 3D model data (typically a PLY file)
         ply_data = infer_response.json().get('ply_data')
+        
+        if ply_data:
+            try:
+                # Define a directory to save your PLY files
+                save_dir = 'generated_plys'
+                os.makedirs(save_dir, exist_ok=True)
+                
+                # Create a unique filename
+                filename = f"model_{int(time.time())}.ply"
+                save_path = os.path.join(save_dir, filename)
 
+                # Decode the Base64 data
+                # Handle if it has a data URL prefix
+                if 'base64,' in ply_data:
+                    _, ply_b64_data = ply_data.split(',', 1)
+                else:
+                    ply_b64_data = ply_data # Assume it's raw Base64
+
+                ply_bytes = base64.b64decode(ply_b64_data)
+                
+                # Write the bytes to a file
+                with open(save_path, 'wb') as f:
+                    f.write(ply_bytes)
+                app.logger.info(f"Successfully saved 3D model to {save_path}")
+
+            except Exception as save_e:
+                # Log an error if saving fails, but don't stop the request
+                app.logger.error(f"Failed to save PLY file: {save_e}")
         # 5. Synchronize and Return Both Results
         return jsonify({
             'status': 'success',
