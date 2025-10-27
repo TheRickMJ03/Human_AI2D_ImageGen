@@ -95,6 +95,26 @@ pip install -r requirements.txt
 python image_generator.py     # runs on http://0.0.0.0:5000
 ```
 
+### ⚙️ Environment Setup  
+
+Create two `.env` files to store your API keys and configuration values.  
+
+#### 🧩 Root `.env`  Located in the project root:
+```bash
+# === Frontend Environment Variables ===
+REACT_APP_OPENAI_API_KEY=
+```
+
+#### 🧩 SERVER `.env`  Located in server/.env:
+```bash
+# === Backend Environment Variables ===
+HF_API_TOKEN=
+GOOGLE_CLOUD_PROJECT=
+REACT_APP_OPENAI_API_KEY=
+FLASK_SECRET_KEY=
+VM_IP_ADDRESS=
+```
+
 ### 2️⃣ Frontend (React)  
 ```bash
 cd public
