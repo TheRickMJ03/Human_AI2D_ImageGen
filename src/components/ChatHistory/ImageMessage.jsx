@@ -96,7 +96,7 @@ const ImageMessage = ({
   return (
     <div className="image-message">
       <div className="image-container">
-        <img
+     <img
           src={getCurrentImageSource()}
           alt={msg.prompt || "Generated image"}
           onClick={!show3DViewer ? (e) => handleImageClick(e, msg.content) : undefined}
