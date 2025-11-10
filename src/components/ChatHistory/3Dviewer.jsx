@@ -2,23 +2,23 @@ import { useEffect, useRef, useState } from "react";
 import './3Dviewer.css';
 
 const ThreeDViewer = ({ threeDModel, bboxs, imageDisplaySize, show3DViewer, setShow3DViewer, setError, resetViewRef }) => {
- ```
-threeDModel → the binary data of the 3D model.
+ 
+      // threeDModel → the binary data of the 3D model.
 
-bboxs → bounding box coordinates (minX, maxX, etc.).
+      // bboxs → bounding box coordinates (minX, maxX, etc.).
 
-imageDisplaySize → { width, height } of the image the 3D model aligns with.
+      // imageDisplaySize → { width, height } of the image the 3D model aligns with.
 
-show3DViewer → whether the viewer should be displayed.
+      // show3DViewer → whether the viewer should be displayed.
 
-setShow3DViewer → toggles visibility.
+      // setShow3DViewer → toggles visibility.
 
-setError → sets an error message if something fails.
+      // setError → sets an error message if something fails.
 
-resetViewRef → a React ref that will later hold a function to reset the camera view.
+      // resetViewRef → a React ref that will later hold a function to reset the camera view.
 
 
- ```
+ 
  
  
   const [isLoadingLibraries, setIsLoadingLibraries] = useState(false);
@@ -200,9 +200,9 @@ resetViewRef → a React ref that will later hold a function to reset the camera
             if (url) URL.revokeObjectURL(url);
           }
           const bbox = bboxs || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-          //this helps vizualize where the camera is pointing after using please comment out
-          const helper = new THREE.CameraHelper(camera);
-          scene.add(helper);
+          // //this helps vizualize where the camera is pointing after using please comment out
+          // const helper = new THREE.CameraHelper(camera);
+          // scene.add(helper);
 
           console.log("--- 3D Viewer Debug Start ---");
           console.log("Using bbox:", JSON.parse(JSON.stringify(bbox)));
@@ -394,20 +394,6 @@ resetViewRef → a React ref that will later hold a function to reset the camera
   return (
     <div
       id="three-container"
-      style={{
-        //It allows the 3D viewer to float on top of other content (like the 2D image it's supposed to align with).
-        position: "absolute", 
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        //By setting it to 10, we're making sure this 3D viewer div renders on top of any other content in the same container
-        zIndex: 10,
-        borderRadius: "8px",
-        overflow: "hidden",
-        transform: "translateZ(0)",
-        display: show3DViewer ? "block" : "none",
-      }}
     ></div>
   );
 };

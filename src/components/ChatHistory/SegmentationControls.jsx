@@ -9,8 +9,14 @@ const SegmentationControls = ({
   show3DViewer,
   setShow3DViewer,
   isGenerating3D,
-  resetViewRef
+  resetViewRef,
+  //This states will control the rerendeing process
+  onRender,
+  isRerendering,
+  rerenderError
+
 }) => {
+  const renderButtonText = "Refine Image";
   return (
     <div className="segmentation-controls">
       <div className="points-count">
@@ -49,6 +55,26 @@ const SegmentationControls = ({
       >
         Clear
       </button>
+
+      {/* This Button will only be shown only if the 3dmodel is display and the sh ow3dviewer */}
+      {threeDModel && show3DViewer && (
+        <button
+          className="render-btn"
+          onClick={onRender}
+          disabled={isRerendering}
+        >
+          {isRerendering ? "Rerendering..." : renderButtonText}
+        </button>
+      )}
+
+      
+
+      {/* Display rerender error if any */}
+      {rerenderError && <div className="rerender-error">{rerenderError}</div>}
+
+
+
+
     </div>
   );
 };

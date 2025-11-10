@@ -119,11 +119,52 @@ def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-001"):
     except Exception as e:
         app.logger.error(f"Gemini generation error: {e}", exc_info=True)
         raise
+
+
+
+def get_description_from_gemini(prompt, image_bytes, mime_type="image/png", model="gemini-2.0-flash-001"):
+#This function returns the better propmt giveen an image and basic prompt 
+    try:
+        from google.genai import types
+        contents = []
+
+        # 1. Add image part
+        image_part = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type=mime_type,
+        )
+        contents.append(image_part)
+
+        # 2. Add text prompt
+        contents.append(prompt)
+
+        # 3. Configure for a TEXT-ONLY response
+        config = types.GenerateContentConfig(
+                response_modalities=["Text"],
+                candidate_count=1,
+        )
+        
+        # 4. Call the API
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+
+        # 5. Return the text
+        if response.text:
+            return response.text
+        else:
+            raise Exception("No text response from Gemini")
+
+    except Exception as e:
+        app.logger.error(f"Gemini text generation error: {e}", exc_info=True)
+        raise
     
 SAMVMURL = f"http://{VM_KEY}:5000"
 VM_3D_SERVER_URL = f"http://{VM_KEY}:5001"
 VM_LAMA_SERVER_URL = f"http://{VM_KEY}:5002" 
-
+VM_CANNY_SERVER_URL = f"http://{VM_KEY}:5003"
 
 def upload_to_vm(filepath, metadata=None):
     try:
@@ -142,7 +183,7 @@ def upload_to_vm(filepath, metadata=None):
         return None
         
 def prepare_3d_input(image_url, mask_data):
-    """Prepares the cropped and centered image for 3D generation."""
+    #Prepares the cropped and centered image for 3D generation.#
     # Extract filename from URL
     image_filename = os.path.basename(image_url)
     image_path = os.path.join('generated_images', image_filename)
@@ -208,12 +249,14 @@ def transform_to_3d_alive():
     """
     Orchestrates the synchronous inpainting (LaMa) and 3D generation.
     Returns the inpainted image (Image B) and the 3D model (3D_Cat) together.
+    Returns: inpainted_image, ply_data, detailed_prompt
     """
     try:
-        # 1. PARSE INPUT DATA
+        #we get the the the original image plus the mask and the simple prompt 
         data = request.json
         image_url = data['image_url']
-        mask_data = data['mask_data'] # Base64 string of the user-drawn mask
+        mask_data = data['mask_data']
+        simple_prompt = data.get('simple_prompt', 'the object')
 
         # Retrieve and Encode Original Image
         image_filename = os.path.basename(image_url)
@@ -227,7 +270,7 @@ def transform_to_3d_alive():
 
         # 2. PROCESS AND DILATE THE MASK
         
-        # Handle the data URL prefix (e.g., 'data:image/png;base64,')
+        
         if 'base64,' in mask_data:
             mask_header, mask_b64 = mask_data.split(',', 1)
         else:
@@ -235,34 +278,36 @@ def transform_to_3d_alive():
             mask_b64 = mask_data
 
         mask_bytes = base64.b64decode(mask_b64)
-
-        # Convert Base64 mask bytes into a NumPy array for OpenCV processing
+        """
+                Here is where the whole mask dilation starts
+        
+        
+        
+        """
         np_arr = np.frombuffer(mask_bytes, np.uint8)
-        # Decode the image data into an OpenCV array (IMREAD_UNCHANGED keeps alpha/transparency)
         mask_image_cv = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
 
-        # Handle different channel configurations (e.g., check for transparency/alpha channel)
         if len(mask_image_cv.shape) > 2 and mask_image_cv.shape[2] == 4:
-            # If 4 channels (RGBA), use the alpha channel (index 3) as the mask
             mask_gray = mask_image_cv[:, :, 3]
         elif len(mask_image_cv.shape) > 2:
-            # If 3 channels (BGR), convert to grayscale
+        
             mask_gray = cv2.cvtColor(mask_image_cv, cv2.COLOR_BGR2GRAY)
         else:
-            # Already a single channel (grayscale)
             mask_gray = mask_image_cv
 
-        # Binarize the mask (anything > 1 becomes 255/white) for dilation
         _, binary_mask = cv2.threshold(mask_gray, 1, 255, cv2.THRESH_BINARY)
         # Define a 15x15 kernel (the structure used to enlarge the mask)
         kernel = np.ones((15, 15), np.uint8)
-        # DILATION: Expands the mask area to create a soft blending margin for inpainting
         dilated_mask = cv2.dilate(binary_mask, kernel, iterations=1)
         
-        # Re-encode the dilated mask back to Base64 for API transmission
         _, buffer = cv2.imencode('.png', dilated_mask)
         refined_mask_b64 = base64.b64encode(buffer).decode('utf-8')
         refined_mask_data_url = f"{mask_header},{refined_mask_b64}"
+        """
+            Here is where the whole process finishes 
+        """
+
+
 
 
         # 3. CALL LAMA INPAINTING SERVICE
@@ -287,18 +332,16 @@ def transform_to_3d_alive():
         # Extract the Base64 inpainted image from the LaMa response
         inpainted_image_data = lama_response.json().get('inpainted_image')
 
+        # inpainted_image_data = None
 
-        # 4. PREPARE INPUT AND CALL 3D GENERATION SERVICE
-        # Calls a helper function (not shown) to prepare the input for 3D generation.
-        # This function should use the *inpainted* image to ensure the 3D model is
-        # generated in the *deleted* region (based on Hour 1's goal).
+
         final_image_base64_data_url = prepare_3d_input(image_url, mask_data)
 
         print(f"Starting 3D generation on {VM_3D_SERVER_URL}/process")
         infer_response = requests.post(
             f"{VM_3D_SERVER_URL}/process",
             json={"image": final_image_base64_data_url},
-            timeout=300 # Set a long timeout for the 3D generation process
+            timeout=300 
         )
 
         # Handle 3D generation API errors
@@ -308,8 +351,10 @@ def transform_to_3d_alive():
                 'details': infer_response.text
             }), 500
 
-        # Extract the 3D model data (typically a PLY file)
+        # Extract the 3D model data  PLY file
         ply_data = infer_response.json().get('ply_data')
+
+
         
         if ply_data:
             try:
@@ -338,113 +383,102 @@ def transform_to_3d_alive():
             except Exception as save_e:
                 # Log an error if saving fails, but don't stop the request
                 app.logger.error(f"Failed to save PLY file: {save_e}")
+        
+        
+        # In this part we are goin to use google geimini to create a better prompt 
+        
+        print("Starting detailed prompt generation with Gemini")
+        detailed_prompt = "" 
+        try:
+            # Create the "meta-prompt" for the LLM
+            meta_prompt = f"""
+            Analyze the object in this image. The user's simple prompt is "{simple_prompt}".
+            Generate a new, highly detailed prompt for an image generation model. 
+            This new prompt should describe the object's key visual features like 
+            colors, clothing, shape, texture, and style.
+            Only output the new, detailed prompt. Do not add any conversational text.
+            """
+            if 'base64,' in final_image_base64_data_url:
+                 image_b64_data = final_image_base64_data_url.split(',', 1)[1] # <-- CORRECTED
+            else:
+                 image_b64_data = final_image_base64_data_url # <-- CORRECTED
+            
+            # 2. Decode the base64 string back into bytes
+            image_bytes = base64.b64decode(image_b64_data)
+            # Call the text-only Gemini helper
+            detailed_prompt = get_description_from_gemini(
+                prompt=meta_prompt,
+                image_bytes=image_bytes,
+                mime_type="image/png"
+            ).strip()
+            
+        except Exception as gemini_e:
+            app.logger.error(f"Gemini prompt generation failed: {gemini_e}")
+            detailed_prompt = f"Failed to generate prompt: {gemini_e}"
+        
+        
+        
+
+        
+        
         # 5. Synchronize and Return Both Results
         return jsonify({
             'status': 'success',
             'inpainted_image': inpainted_image_data,
-            'ply_data': ply_data # Returns the 3D model data
+            'ply_data': ply_data,# Returns the 3D model data
+            'detailed_prompt': detailed_prompt
         })
 
     except Exception as e:
         # Catch and log any unexpected server-side errors
         app.logger.error(f"Error in transform_to_3d_alive: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-   
 
-# @app.route('/generate_3d_direct', methods=['POST'])
-# def generate_3d_direct():
-#     try:
-#         data = request.json
-#         image_url = data['image_url']
-#         mask_data = data['mask_data']  # This is the actual mask data
 
-#         # Extract filename from URL
-#         image_filename = os.path.basename(image_url)
-#         image_path = os.path.join('generated_images', image_filename)
-        
-#         # Verify image exists
-#         if not os.path.exists(image_path):
-#             return jsonify({'error': 'Image file not found'}), 404
-        
-#         # Load original image
-#         with open(image_path, 'rb') as f:
-#             original_image = Image.open(f).convert('RGBA')
-        
-#         # Decode mask (base64 string)
-#         if ',' in mask_data:
-#             mask_data = mask_data.split(',')[-1]
-            
-#         mask_bytes = base64.b64decode(mask_data)
-#         mask_image = Image.open(BytesIO(mask_bytes)).convert('L')
-        
-#         # Ensure mask matches image size
-#         if mask_image.size != original_image.size:
-#             mask_image = mask_image.resize(original_image.size, Image.LANCZOS)
-        
-#         # Create isolated image with only the masked area
-#         isolated_image = Image.new('RGBA', original_image.size, (0, 0, 0, 0))
-#         isolated_image.paste(original_image, (0, 0), mask_image)
-        
-#         # Crop to bounding box of the non-transparent pixels
-#         bbox = isolated_image.getbbox()
-#         if not bbox:
-#             return jsonify({'error': 'No object found in mask'}), 400
-            
-#         cropped = isolated_image.crop(bbox)
-        
-#         # Resize to 256x256 while maintaining aspect ratio
-#         width, height = cropped.size
-#         scale = min(256/width, 256/height)
-#         new_width = int(width * scale)
-#         new_height = int(height * scale)
-        
-#         resized = cropped.resize((new_width, new_height), Image.LANCZOS)
-        
-#         # Create 256x256 canvas with transparent background
-#         final_image = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
-        
-#         # Center the resized image
-#         x = (256 - new_width) // 2
-#         y = (256 - new_height) // 2
-#         final_image.paste(resized, (x, y))
-        
 
-#         final_image.save('debuggg.png')
-#         # Convert to base64
-#         buffer = BytesIO()
-#         final_image.save(buffer, format='PNG', optimize=True)
-#         final_image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
-#         # Send to 3D server
-#         print(f"Sending cropped image to {VM_3D_SERVER_URL}/process")
-        
-#         response = requests.post(
-#             f"{VM_3D_SERVER_URL}/process",  
-#             json={"image": f"data:image/png;base64,{final_image_base64}"},
-#             timeout=300
-#         )
-        
-#         # Save the returned PLY data locally
-#         if response.status_code == 200:
-#             ply_data = response.json().get('ply_data')
-#             if ply_data:
-#                 os.makedirs('3d_models', exist_ok=True)
-#                 filename = f"3d_model_{int(time.time())}.ply"
-#                 filepath = os.path.join('3d_models', filename)
-                
-#                 with open(filepath, 'wb') as f:
-#                     f.write(base64.b64decode(ply_data))
+@app.route('/rerender_with_canny', methods=['POST'])
+def rerender_with_canny():
+    try:
+        data = request.json
+        image_base64 = data.get('image_base64')
+        prompt = data.get('prompt')
 
-#         if response.status_code != 200:
-#             return jsonify({
-#                 'error': '3D generation failed',
-#                 'details': response.text
-#             }), 500
-        
-#         return jsonify(response.json())
-        
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 500
+        if not image_base64:
+            return jsonify({'error': 'No image data provided from frontend'}), 400
+
+
+        if 'base64,' in image_base64:
+            app.logger.info("Found data URL prefix, stripping it...")
+            image_base64 = image_base64.split(',', 1)[1]
+
+        vm_url = f"{VM_CANNY_SERVER_URL}/rerender_with_canny" 
+        app.logger.info(f"Forwarding rerender request to {vm_url}...")
+
+        response = requests.post(
+            vm_url,
+            json={
+                "image_base64": image_base64,
+                "prompt": prompt
+            },
+            timeout=300 
+        )
+
+        if response.status_code != 200:
+            app.logger.error(f"Canny VM failed. Status: {response.status_code}, Details: {response.text}")
+            return jsonify({
+                'error': 'Canny VM processing failed',
+                'details': response.text
+            }), 500
+
+
+        app.logger.info("Successfully got rerendered image from Canny VM.")
+        return jsonify(response.json())
+
+    except Exception as e:
+        app.logger.error(f"Error in /rerender_with_canny proxy: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
     
 #SAM Endpoint
 @app.route('/segment_with_sam', methods=['POST'])

@@ -3,6 +3,7 @@ import SegmentationControls from "./SegmentationControls";
 import SegmentationOverlay from "./SegmentationOverlay";
 import ThreeDViewer from "./3Dviewer"
 import "./ImageMessage.css"
+import html2canvas from "html2canvas";
 
 const ImageMessage = ({
   msg,
@@ -12,21 +13,34 @@ const ImageMessage = ({
   error,
   handleImageClick,
   clearSegmentation,
-  setError
+  setError,
+  onRerenderComplete
 }) => {
   const [isGenerating3D, setIsGenerating3D] = useState(false);
   const [threeDModel, setThreeDModel] = useState(null);
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [inpaintedImage, setInpaintedImage] = useState(null); 
-  
+  const [detailedPrompt, setDetailedPrompt] = useState(null);
+  const [rerenderedImage, setRerenderedImage] = useState(null); 
+
+  const imageContainerRef = useRef(null); 
+  const threeDContainerRef = useRef(null);
+  const [isRerendering, setIsRerendering] = useState(false);
+  const [rerenderError, setRerenderError] = useState(null);
+
   const resetViewRef = useRef(null);
 
   useEffect(() => {
+    // This effect clears state when the segmentation target changes
     if (!segmentationData.imageUrl || segmentationData.imageUrl !== msg.content) {
       setThreeDModel(null);
       setShow3DViewer(false);
       setInpaintedImage(null);
       setIsGenerating3D(false);
+      setIsRerendering(false); 
+      setRerenderError(null);
+      setDetailedPrompt(null);
+      setRerenderedImage(null); 
     }
   }, [segmentationData.imageUrl, msg.content]); 
 
@@ -48,7 +62,8 @@ const ImageMessage = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           image_url: segmentationData.imageUrl,
-          mask_data: segmentationData.maskData
+          mask_data: segmentationData.maskData,
+          prompt: msg.prompt
         })
       });
 
@@ -61,6 +76,11 @@ const ImageMessage = ({
         setInpaintedImage(result.inpainted_image);
       } else {
         throw new Error('No inpainted image received from server');
+      }
+
+      if (result.detailed_prompt) {
+        setDetailedPrompt(result.detailed_prompt);
+        console.log("Detailed prompt received and stored:", result.detailed_prompt);
       }
 
       if (result.ply_data) {
@@ -84,10 +104,66 @@ const ImageMessage = ({
     }
   };
 
+
+  const handleRerender = async () => {
+    if (!threeDContainerRef.current) {
+      setRerenderError("3D viewer container not found.");
+      return;
+    }
+    
+    setIsRerendering(true);
+    setRerenderError(null);
+    
+    try {
+      const canvas = await html2canvas(threeDContainerRef.current, {
+        useCORS: true, 
+        allowTaint: true,
+        backgroundColor: null, 
+        preserveDrawingBuffer: true, 
+      });
+      const imageBase64 = canvas.toDataURL('image/png');
+      
+      const promptToSend = detailedPrompt || msg.prompt || "a new version of this";
+      console.log("Sending this prompt to rerender:", promptToSend);
+      const response = await fetch('http://localhost:5000/rerender_with_canny', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_base64: imageBase64,
+          prompt: promptToSend
+        }),
+      });
+
+      const data = await response.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const newImageUrl =  data.new_image_url 
+      setRerenderedImage(newImageUrl);
+      setShow3DViewer(false);
+
+      if (onRerenderComplete) {
+        onRerenderComplete(data.new_image_url, msg.prompt); 
+      }
+      
+
+    } catch (err) {
+      console.error("Rerender failed:", err);
+      setRerenderError(err.message || "Failed to rerender.");
+    } finally {
+      setIsRerendering(false);
+    }
+  };
+
   const getCurrentImageSource = () => {
-    if (inpaintedImage && show3DViewer) {
+    if (inpaintedImage && (show3DViewer || rerenderedImage)) {
       return inpaintedImage;
     }
+    if (msg.content.startsWith('data:image')) {
+      return msg.content; 
+    }
+
     return `http://localhost:5000${
       msg.content.startsWith("/") ? msg.content : `/${msg.content}`
     }`;
@@ -95,12 +171,13 @@ const ImageMessage = ({
 
   return (
     <div className="image-message">
-      <div className="image-container">
+      <div className="image-container" ref={imageContainerRef}>
      <img
           src={getCurrentImageSource()}
-          alt={msg.prompt || "Generated image"}
-          onClick={!show3DViewer ? (e) => handleImageClick(e, msg.content) : undefined}
-          style={show3DViewer ? { cursor: 'default' } : {}}
+          alt={msg.prompt || "Generated"} 
+          crossOrigin="anonymous"
+          onClick={!show3DViewer && !rerenderedImage ? (e) => handleImageClick(e, msg.content) : undefined}
+          style={show3DViewer || rerenderedImage ? { cursor: 'default' } : {}}
           onLoad={!show3DViewer ? (e) => {
             const img = e.target;
             const rect = img.getBoundingClientRect();
@@ -113,7 +190,36 @@ const ImageMessage = ({
             }));
           } : undefined}
         />
+        
+      {rerenderedImage && (
+       <img
+          src={rerenderedImage}
+          alt="Refined result" 
+          crossOrigin="anonymous"
+          className="rerendered-image-overlay"
+          style={segmentationData.bbox ? {
+            position: 'absolute',
+            left: `${segmentationData.bbox[0] * 100}%`,
+            top: `${segmentationData.bbox[1] * 100}%`,
+            width: `${(segmentationData.bbox[2] - segmentationData.bbox[0]) * 100}%`,
+            height: `${(segmentationData.bbox[3] - segmentationData.bbox[1]) * 100}%`,
+            objectFit: 'cover' 
+          } : {}}
+        />
+      )}
 
+      <div className="three-d-wrapper" ref={threeDContainerRef}style={{
+          position: "absolute", 
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 10,
+          borderRadius: "8px",
+          overflow: "hidden",
+          transform: "translateZ(0)",
+          display: show3DViewer ? "block" : "none", 
+        }}>
         {threeDModel && segmentationData.imageUrl && (
           <ThreeDViewer
             threeDModel={threeDModel}
@@ -130,8 +236,8 @@ const ImageMessage = ({
             resetViewRef={resetViewRef}
           />
         )}
-
-          {segmentationData.imageUrl === msg.content && !show3DViewer && (
+        </div>
+          {segmentationData.imageUrl === msg.content && !show3DViewer && !rerenderedImage && (
             <SegmentationOverlay
               msg={msg}
               segmentationData={segmentationData}
@@ -147,18 +253,10 @@ const ImageMessage = ({
           </div>
         )}
 
-        {segmentationData.imageUrl === msg.content && !show3DViewer && (
-          <button
-            className="clear-segmentation"
-            onClick={clearSegmentation}
-            title="Clear segmentation"
-          >
-            ×
-          </button>
-        )}
+   
       </div>
 
-      {segmentationData.imageUrl === msg.content && (
+      {segmentationData.imageUrl === msg.content && !rerenderedImage && (
         <SegmentationControls
           segmentationData={segmentationData}
           generate3DModel={generate3DModel}
@@ -168,6 +266,9 @@ const ImageMessage = ({
           setShow3DViewer={setShow3DViewer}
           isGenerating3D={isGenerating3D}
           resetViewRef={resetViewRef}
+          onRender={handleRerender}
+          isRerendering={isRerendering}
+          rerenderError={rerenderError}
         />
       )}
 
