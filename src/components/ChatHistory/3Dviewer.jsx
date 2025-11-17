@@ -1,252 +1,383 @@
 import { useEffect, useRef, useState } from "react";
 import './3Dviewer.css';
 
-const ThreeDViewer = ({ threeDModel, bboxs, imageDisplaySize, show3DViewer, setShow3DViewer, setError }) => {
+const ThreeDViewer = ({ threeDModel, bboxs, imageDisplaySize, show3DViewer, setShow3DViewer, setError, resetViewRef }) => {
+ 
+      // threeDModel → the binary data of the 3D model.
+
+      // bboxs → bounding box coordinates (minX, maxX, etc.).
+
+      // imageDisplaySize → { width, height } of the image the 3D model aligns with.
+
+      // show3DViewer → whether the viewer should be displayed.
+
+      // setShow3DViewer → toggles visibility.
+
+      // setError → sets an error message if something fails.
+
+      // resetViewRef → a React ref that will later hold a function to reset the camera view.
+
+
+ 
+ 
+ 
   const [isLoadingLibraries, setIsLoadingLibraries] = useState(false);
   const isLoadingLibrariesRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const animationIdRef = useRef(null);
+  const controlsRef = useRef(null);
+  const splatMeshRef = useRef(null);
+  const parentGroupRef = useRef(null);
+  const cameraRef = useRef(null);
+  const sparkRef = useRef(null);
+  const isCleaningUpRef = useRef(false);
+  const loadPromiseRef = useRef(null);
+  const resizeTimeoutRef = useRef(null);
+
+  const handleResize = () => {
+    if (resizeTimeoutRef.current) {
+      clearTimeout(resizeTimeoutRef.current);
+    }
+    resizeTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current || isCleaningUpRef.current) return;
+      const container = document.getElementById("three-container");
+      const renderer = rendererRef.current;
+      const camera = cameraRef.current;
+      if (container && renderer && camera) {
+        try {
+          renderer.setSize(container.clientWidth, container.clientHeight, false);
+          camera.aspect = container.clientWidth / container.clientHeight;
+          camera.updateProjectionMatrix();
+        } catch (e) {
+          console.warn("Error in handleResize:", e);
+        }
+      }
+    }, 100);
+  };
 
   useEffect(() => {
     isLoadingLibrariesRef.current = isLoadingLibraries;
   }, [isLoadingLibraries]);
 
   useEffect(() => {
-    let renderer, scene, camera, animationId, controls, spark;
+    isMountedRef.current = true;
+    isCleaningUpRef.current = false;
 
-    if (threeDModel && !isLoadingLibrariesRef.current) {
-      const loadAndRender = async () => {
-        setIsLoadingLibraries(true);
-        setError(null);
+    const cleanup = () => {
+      isCleaningUpRef.current = true;
+      isMountedRef.current = false;
 
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+        resizeTimeoutRef.current = null;
+      }
+      if (animationIdRef.current) {
+        cancelAnimationFrame(animationIdRef.current);
+        animationIdRef.current = null;
+      }
+      loadPromiseRef.current = null;
+      window.removeEventListener("resize", handleResize);
+
+      if (controlsRef.current) {
+        controlsRef.current.dispose();
+        controlsRef.current = null;
+      }
+      if (parentGroupRef.current && sceneRef.current) {
         try {
-          // ✅ Load libraries safely
-          let OrbitControls, SplatMesh, SparkRenderer, THREE;
+          sceneRef.current.remove(parentGroupRef.current);
+        } catch (e) {}
+        parentGroupRef.current = null;
+      }
+      if (splatMeshRef.current) {
+        try {
+          if (typeof splatMeshRef.current.dispose === "function") {
+            splatMeshRef.current.dispose();
+          }
+        } catch (e) {}
+        splatMeshRef.current = null;
+      }
+      if (sparkRef.current && sceneRef.current) {
+        try {
+          sceneRef.current.remove(sparkRef.current);
+          sparkRef.current.renderer = null;
+        } catch (e) {}
+        sparkRef.current = null;
+      }
+      if (sceneRef.current) {
+        try {
+          sceneRef.current.clear();
+        } catch (e) {}
+        sceneRef.current = null;
+      }
+      if (rendererRef.current) {
+        try {
+          rendererRef.current.dispose();
+          const canvas = rendererRef.current.domElement;
+          if (canvas && canvas.parentNode) {
+            canvas.parentNode.removeChild(canvas);
+          }
+        } catch (e) {}
+        rendererRef.current = null;
+      }
+      cameraRef.current = null;
+      const container = document.getElementById("three-container");
+      if (container) container.innerHTML = "";
+    };
+
+    if (threeDModel && show3DViewer && !isLoadingLibrariesRef.current) {
+      const loadAndRender = async () => {
+        const currentLoadPromise = Symbol("loadPromise");
+        loadPromiseRef.current = currentLoadPromise;
+        try {
+          setIsLoadingLibraries(true);
+          setError(null);
+
+          let THREE, SplatMesh, SparkRenderer, OrbitControls; 
           try {
-            ({ OrbitControls } = await import("three/examples/jsm/controls/OrbitControls"));
-            ({ SplatMesh, SparkRenderer } = await import("@sparkjsdev/spark"));
-            THREE = await import("three");
+            // Dynamically import Three.js
+            const threeModule = await import("three");
+            THREE = threeModule;
+            // Dynamically import Spark.js components
+            const sparkModule = await import("@sparkjsdev/spark");
+            ({ SplatMesh, SparkRenderer } = sparkModule);
+            // Dynamically import OrbitControls
+            const controlsModule = await import("three/examples/jsm/controls/OrbitControls.js");
+            OrbitControls = controlsModule.OrbitControls;
           } catch (err) {
-            console.error("Failed to import 3D libraries:", err);
-            throw new Error("Failed to import 3D libraries");
+            throw new Error("Failed to import libraries: " + err.message);
           }
 
-          // ✅ WebGL check
-          const canvas = document.createElement("canvas");
-          const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+          const canvasCheck = document.createElement("canvas");
+          const gl = canvasCheck.getContext("webgl") || canvasCheck.getContext("experimental-webgl");
           if (!gl) throw new Error("WebGL not supported");
 
-          // Scene & camera
+          // Get the container element
           const container = document.getElementById("three-container");
-          scene = new THREE.Scene();
-          camera = new THREE.PerspectiveCamera(
-            60,
-            container.clientWidth / container.clientHeight,
-            0.1,
-            70
-          );
+          if (!container) return;
 
-          // ✅ SparkRenderer required
+          // Scene, Camera, & Light Setup 
+          const scene = new THREE.Scene();
+          const camera = new THREE.PerspectiveCamera(
+            60, // Field of View
+            container.clientWidth / container.clientHeight, // Aspect Ratio
+            0.1, // Near clipping plane
+            70   // Far clipping plane
+          );
+          cameraRef.current = camera;
+
+          camera.position.set(0, 0, 2.0); // Set initial camera position
+          camera.lookAt(0, 0, 0);
+
+          // Initialize SparkRenderer (for Gaussian Splatting)
+          let spark;
           try {
             spark = new SparkRenderer({ renderer: null });
             scene.add(spark);
+            sparkRef.current = spark;
           } catch (err) {
-            console.error("Failed to initialize SparkRenderer:", err);
             throw new Error("SparkRenderer initialization failed");
           }
 
-          // ✅ Lights
+
+          // Add basic lighting
           scene.add(new THREE.AmbientLight(0x404040));
           const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
           dirLight.position.set(1, 1, 1);
           scene.add(dirLight);
 
-          // Load 3D model
-          const blob = new Blob([threeDModel], { type: "application/octet-stream" });
-          const url = URL.createObjectURL(blob);
-
+          let url = null;
+          //Loads the binary 3d data into the mesh
           let splatMesh;
           try {
+            const blob = new Blob([threeDModel], { type: "application/octet-stream" });
+            url = URL.createObjectURL(blob);
             splatMesh = new SplatMesh({ url });
-          } catch (err) {
-            console.error("Failed to create SplatMesh:", err);
-            throw new Error("SplatMesh creation failed");
+            splatMeshRef.current = splatMesh;
           } finally {
-            URL.revokeObjectURL(url);
-          } 
-
-          console.log('BBox data:', bboxs);
-          console.log('Image display size:', imageDisplaySize);
-          console.log('Container size:', { width: container.clientWidth, height: container.clientHeight });
-
-          // ✅ BEST APPROACH: Match 3D object size to segmented object display size
+            if (url) URL.revokeObjectURL(url);
+          }
           const bbox = bboxs || { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-          
-          // Calculate segmented object size in display pixels
-          const bboxWidthNormalized = bbox.maxX - bbox.minX;
-          const bboxHeightNormalized = bbox.maxY - bbox.minY;
-          const bboxCenterX = (bbox.minX + bbox.maxX) / 2;
-          const bboxCenterY = (bbox.minY + bbox.maxY) / 2;
+          // //this helps vizualize where the camera is pointing after using please comment out
+          // const helper = new THREE.CameraHelper(camera);
+          // scene.add(helper);
 
-          // Convert normalized bbox to display pixels
+          console.log("--- 3D Viewer Debug Start ---");
+          console.log("Using bbox:", JSON.parse(JSON.stringify(bbox)));
+          console.log("ImageDisplaySize (w, h):", imageDisplaySize.width, imageDisplaySize.height);
+          console.log("Container Size (w, h):", container.clientWidth, container.clientHeight);
+
+          const bboxWidthNormalized = bbox.maxX - bbox.minX;
+          console.log("bboxWidthNormalized (0-1):", bboxWidthNormalized);
+
+          const bboxHeightNormalized = bbox.maxY - bbox.minY;
+          console.log("bboxHeightNormalized (0-1):", bboxHeightNormalized);
+
+          const bboxCenterX = (bbox.minX + bbox.maxX) / 2;
+          console.log("bboxCenterX (0-1):", bboxCenterX);
+
+          const bboxCenterY = (bbox.minY + bbox.maxY) / 2;
+          console.log("bboxCenterY (0-1):", bboxCenterY);
+
           const bboxWidthPixels = bboxWidthNormalized * imageDisplaySize.width;
+          console.log("bboxWidthPixels (on original image):", bboxWidthPixels);
+
           const bboxHeightPixels = bboxHeightNormalized * imageDisplaySize.height;
-          
-          // Calculate object size relative to container
+          console.log("bboxHeightPixels (on original image):", bboxHeightPixels);
+
           const containerToImageRatio = Math.min(
             container.clientWidth / imageDisplaySize.width,
             container.clientHeight / imageDisplaySize.height
           );
-          
-          // Size the 3D object to match the display size of the segmented object
+          console.log("containerToImageRatio (scale factor for 'fit'):", containerToImageRatio);
+
           const objectDisplayWidth = bboxWidthPixels * containerToImageRatio;
+          console.log("objectDisplayWidth (in container px):", objectDisplayWidth);
+
           const objectDisplayHeight = bboxHeightPixels * containerToImageRatio;
-          
-          // Use the larger dimension for uniform scaling
+          console.log("objectDisplayHeight (in container px):", objectDisplayHeight);
+
           const objectSize = Math.max(objectDisplayWidth, objectDisplayHeight) / container.clientWidth;
-          
-          // Scale the 3D object to match the display size
-          const objectScale = objectSize * 2; // Adjust multiplier as needed
-          
-          // Position the object at the correct location
+          console.log("objectSize (normalized to container width):", objectSize);
+
+          const objectScale = objectSize * 2;
+          console.log("FINAL objectScale (for Three.js):", objectScale);
+
           const containerAspect = container.clientWidth / container.clientHeight;
+          console.log("containerAspect:", containerAspect);
+
           const imageAspect = imageDisplaySize.width / imageDisplaySize.height;
-          
-          let imageScale, imageOffsetX = 0, imageOffsetY = 0;
-          
+          console.log("imageAspect:", imageAspect);
+
+          let imageScale, imageOffsetY = 0;
           if (containerAspect > imageAspect) {
-            // Container is wider - image height determines scale
+            // Container is WIDER (Letterbox)
             imageScale = 2 / containerAspect;
+            console.log("Case: Letterbox (container wider)");
           } else {
-            // Container is taller - image width determines scale  
+            // Container is TALLER (Pillarbox)
             imageScale = 2;
             imageOffsetY = (1 - (imageAspect / containerAspect)) * 0.5;
+            console.log("Case: Pillarbox (container taller)");
           }
-          
-          const positionX = (bboxCenterX - 0.5) * imageScale + imageOffsetX;
+          console.log("imageScale (Three.js units):", imageScale);
+          console.log("imageOffsetY (Three.js units):", imageOffsetY);
+
+          //THIS is just a logic I was trying to implement last friday pretty much it calculates the visible height and visible width, it looks like it did not work 
+      
+          function getViewSizeAtDepth(camera, depth) {
+            const vFOV = THREE.MathUtils.degToRad(camera.fov);
+            const height = 2 * Math.tan(vFOV / 2) * depth;
+            const width = height * camera.aspect;
+            const bounds = {
+              left: -width / 2,
+              right: width / 2,
+              top: height / 2,
+              bottom: -height / 2,
+              z: -camera.position.z
+            };
+//---------------------------------------------------------------------------------------
+            console.log("These are the boundaries ",bounds);
+            return { width, height };
+          }
+
+
+
+
+
+          const view = getViewSizeAtDepth(camera, 2);
+          console.log(view.width, view.height);
+
+
+          const positionX = (bboxCenterX - 0.5) * imageScale;
+          console.log("FINAL positionX (Three.js units):", positionX);
+
+          // (0.5 - bboxCenterY) flips Y-axis and converts to [-0.5, 0.5] range
           const positionY = (0.5 - bboxCenterY) * (imageScale / containerAspect) + imageOffsetY;
+          console.log("FINAL positionY (Three.js units):", positionY);
 
-          splatMesh.scale.set(objectScale, objectScale, objectScale);
-          splatMesh.position.set(positionX, positionY, 0);
+          const parentGroup = new THREE.Group();
+          parentGroupRef.current = parentGroup;
+          parentGroup.scale.set(objectScale, objectScale, objectScale);
+          console.log("Applying scale to parentGroup:", objectScale);
 
-          console.log('Object size matching:', {
-            bboxWidthPixels,
-            bboxHeightPixels,
-            objectDisplayWidth,
-            objectDisplayHeight,
-            objectSize,
-            objectScale,
-            containerToImageRatio
-          });
-
-          // Perfect camera positioning to frame the object
-          const objectDiagonal = Math.sqrt(bboxWidthNormalized * bboxWidthNormalized + bboxHeightNormalized * bboxHeightNormalized);
-          const objectScreenSize = objectDiagonal * objectScale;
+          parentGroup.position.set(positionX,positionY, objectScale);
+          console.log(" parentGroup position :",parentGroup.position);
+          console.log("--- 3D Viewer Debug End ---");
+            
           
-          // Calculate perfect camera distance to fit object in view
-          const fovRadians = camera.fov * (Math.PI / 180);
-          const perfectDistance = (objectScreenSize * 0.8) / (2 * Math.tan(fovRadians / 2));
+          splatMesh.scale.set(1, 1, 1);
+          splatMesh.position.set(0, 0, 0);
+          splatMesh.rotation.set(0, 0, 0); 
           
-          // Ensure reasonable limits
-          const finalDistance = Math.max(perfectDistance, 0.3);
-          
-          camera.position.set(positionX, positionY, finalDistance);
-          camera.lookAt(positionX, positionY, 0);
-
-          console.log('Perfect camera setup:', {
-            objectDiagonal,
-            objectScreenSize,
-            perfectDistance,
-            finalDistance
-          });
-
-          //Debug visualization
-          const debugPlaneGeometry = new THREE.PlaneGeometry(2, 2 / containerAspect);
-          const debugPlaneMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0xff0000, 
-            wireframe: true, 
-            transparent: true, 
-            opacity: 0.1 
-          });
-          const debugPlane = new THREE.Mesh(debugPlaneGeometry, debugPlaneMaterial);
-          scene.add(debugPlane);
-
-          // Debug: Show segmented object area
-          const bboxGeometry = new THREE.PlaneGeometry(
-            bboxWidthNormalized * imageScale, 
-            bboxHeightNormalized * (imageScale / containerAspect)
-          );
-          const bboxMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0x00ff00, 
-            wireframe: true, 
-            transparent: true, 
-            opacity: 0.3 
-          });
-          const bboxVisual = new THREE.Mesh(bboxGeometry, bboxMaterial);
-          bboxVisual.position.set(positionX, positionY, 0.05);
-          scene.add(bboxVisual);
-
-          scene.add(splatMesh);
-          splatMesh.rotation.y = -Math.PI/2;
+          parentGroup.add(splatMesh);
+          scene.add(parentGroup);
 
           // Renderer
-          renderer = new THREE.WebGLRenderer({
+          const renderer = new THREE.WebGLRenderer({
             alpha: true,
             antialias: true,
             preserveDrawingBuffer: true,
           });
           renderer.setPixelRatio(window.devicePixelRatio);
           renderer.setSize(container.clientWidth, container.clientHeight, false);
-          renderer.domElement.style.width = "100%";
-          renderer.domElement.style.height = "100%";
-          renderer.domElement.style.display = "block";
-
           renderer.setClearColor(0x000000, 0);
           container.innerHTML = "";
           container.appendChild(renderer.domElement);
 
-          // Attach renderer to SparkRenderer
-          spark.renderer = renderer;
+          if (spark) {
+            spark.renderer = renderer;
+          }
 
-          // ✅ Orbit controls centered on object
-          controls = new OrbitControls(camera, renderer.domElement);
-          controls.target.set(positionX, positionY, 0);
-          controls.enableDamping = true;
-          controls.dampingFactor = 0.05;
-          controls.screenSpacePanning = false;
-          controls.minDistance = finalDistance * 0.3;
-          controls.maxDistance = finalDistance * 3;
-          controls.update();
+          // Setup OrbitControls
+          const controls = new OrbitControls(camera, renderer.domElement);
+          controls.target.copy(parentGroup.position); // Look at the object's center
+          controls.enableDamping = true; 
+          controls.dampingFactor = 0.1;
+          controls.screenSpacePanning = true;
+          controls.enableZoom = true;
+          controls.enableRotate = true;
+          controlsRef.current = controls;
 
-          // Animation loop
+          // Reset function
+          const initialCameraPosition = camera.position.clone();
+          const initialTargetPosition = controls.target.clone();
+
+          resetViewRef.current = () => {
+            if (!controlsRef.current || !cameraRef.current) return;
+            cameraRef.current.position.copy(initialCameraPosition);
+            controlsRef.current.target.copy(initialTargetPosition);
+            controlsRef.current.update();
+          };
+
+          sceneRef.current = scene;
+          rendererRef.current = renderer;
+
+          // animate loop
           const animate = () => {
-            animationId = requestAnimationFrame(animate);
+            if (isCleaningUpRef.current || !isMountedRef.current) return;
+            if (!show3DViewer || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
             try {
-              controls.update();
-              renderer.render(scene, camera);
+              if (controlsRef.current) {
+                controlsRef.current.update();
+              }
+              rendererRef.current.render(sceneRef.current, cameraRef.current);
+              animationIdRef.current = requestAnimationFrame(animate);
             } catch (err) {
               console.error("Render loop error:", err);
-              if (animationId) cancelAnimationFrame(animationId);
-              setError(err?.message || "Unknown render error during animation");
+              cancelAnimationFrame(animationIdRef.current);
+              setError("Render error");
               setShow3DViewer(false);
             }
           };
-          animate();
 
-          // Resize handler
-          const handleResize = () => {
-            if (container) {
-              renderer.setSize(container.clientWidth, container.clientHeight, false);
-              renderer.domElement.style.width = "100%";
-              renderer.domElement.style.height = "100%";
-              camera.aspect = container.clientWidth / container.clientHeight;
-              camera.updateProjectionMatrix();
-              controls.update();
-            }
-          };
+          animationIdRef.current = requestAnimationFrame(animate);
           window.addEventListener("resize", handleResize);
-
         } catch (err) {
-          console.error("Error loading 3D viewer:", err);
-          setError(err.message || "Failed to load 3D viewer");
+          console.error("Error loading viewer:", err);
+          setError(err.message);
           setShow3DViewer(false);
         } finally {
           setIsLoadingLibraries(false);
@@ -256,36 +387,13 @@ const ThreeDViewer = ({ threeDModel, bboxs, imageDisplaySize, show3DViewer, setS
     }
 
     return () => {
-      if (animationId) cancelAnimationFrame(animationId);
-      if (controls) controls.dispose();
-      if (renderer) {
-        try {
-          renderer.dispose();
-          renderer.forceContextLoss?.();
-        } catch (e) {
-          console.warn("Error disposing renderer:", e);
-        }
-      }
-      const container = document.getElementById("three-container");
-      if (container) container.innerHTML = "";
+      cleanup();
     };
-  }, [threeDModel, bboxs, imageDisplaySize, setError, setShow3DViewer]);
+  }, [threeDModel, bboxs, imageDisplaySize, setError, setShow3DViewer, resetViewRef, show3DViewer]);
 
   return (
     <div
       id="three-container"
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        zIndex: 10,
-        borderRadius: "8px",
-        overflow: "hidden",
-        transform: "translateZ(0)",
-        display: show3DViewer ? "block" : "none",
-      }}
     ></div>
   );
 };

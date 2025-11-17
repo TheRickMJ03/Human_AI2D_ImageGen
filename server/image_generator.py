@@ -2,6 +2,8 @@ import os
 import time
 import uuid
 import base64
+import cv2
+import numpy as np
 from io import BytesIO
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -13,8 +15,6 @@ import requests
 from google.oauth2 import service_account
 import google.auth.transport.requests
 from google import genai
-from google.genai import types
-from google.genai.types import GenerateContentConfig, Modality
 import numpy as np
 from PIL import Image
 from io import BytesIO
@@ -61,65 +61,111 @@ def get_access_token_from_service_account():
 
 
 
-def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-preview-image-generation"):
+def call_gemini(prompt, image_filename=None, model="gemini-2.0-flash-001"):
     try:
+        from google.genai import types
         contents = []
-        
+
+
         if image_filename:
             image_path = os.path.join("generated_images", image_filename)
-            # Verify file exists
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image file {image_path} not found")
-            
-            try:
-                
-                # Open and verify image
-                image = Image.open(image_path)
-                image.verify()  # Verify without loading
-                image = Image.open(image_path)  # Reopen after verify
-                
-                contents.append(image)#previous image is passed along with the new prompt
-            except Exception as e:
-                app.logger.error(f"Image loading error: {str(e)}")
-                raise Exception(f"Could not load image: {str(e)}")
+
+
+            image = Image.open(image_path)
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            buffer.seek(0)
+
+
+            image_part = types.Part.from_bytes(
+                data=buffer.getvalue(),
+                mime_type="image/png",
+            )
+            contents.append(image_part)
+
 
         contents.append(prompt)
-        
-        config = GenerateContentConfig(
-            response_modalities=[Modality.TEXT, Modality.IMAGE],
-            candidate_count=1
+
+
+        config = types.GenerateContentConfig(
+                response_modalities=["Text", "Image"],
+                candidate_count=1,
         )
-        
         response = client.models.generate_content(
             model=model,
             contents=contents,
-            config=config
+            config=config,
         )
-        
-        # Process the multimodal response
-        text_response = ""
+
+
+        text_response = response.text or ""
         image_bytes = None
-        
+
+
         for part in response.candidates[0].content.parts:
-            if hasattr(part, "text") and part.text:
-                text_response = part.text
-            elif hasattr(part, "inline_data") and part.inline_data:
+            if hasattr(part, "inline_data") and part.inline_data:
                 image_bytes = part.inline_data.data
-                
+
+
         if not image_bytes:
             raise Exception("No image data found in response")
-            
-        return {
-            "image_bytes": image_bytes,
-            "text_response": text_response
-        }
-        
+
+
+        return {"image_bytes": image_bytes, "text_response": text_response}
+
+
     except Exception as e:
-        app.logger.error(f"Gemini generation error: {str(e)}", exc_info=True)
+        app.logger.error(f"Gemini generation error: {e}", exc_info=True)
+        raise
+
+
+
+def get_description_from_gemini(prompt, image_bytes, mime_type="image/png", model="gemini-2.0-flash-001"):
+#This function returns the better propmt giveen an image and basic prompt 
+    try:
+        from google.genai import types
+        contents = []
+
+        # 1. Add image part
+        image_part = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type=mime_type,
+        )
+        contents.append(image_part)
+
+        # 2. Add text prompt
+        contents.append(prompt)
+
+        # 3. Configure for a TEXT-ONLY response
+        config = types.GenerateContentConfig(
+                response_modalities=["Text"],
+                candidate_count=1,
+        )
+        
+        # 4. Call the API
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+
+        # 5. Return the text
+        if response.text:
+            return response.text
+        else:
+            raise Exception("No text response from Gemini")
+
+    except Exception as e:
+        app.logger.error(f"Gemini text generation error: {e}", exc_info=True)
         raise
     
 SAMVMURL = f"http://{VM_KEY}:5000"
 VM_3D_SERVER_URL = f"http://{VM_KEY}:5001"
+VM_LAMA_SERVER_URL = f"http://{VM_KEY}:5002" 
+VM_CANNY_SERVER_URL = f"http://{VM_KEY}:5003"
+
 def upload_to_vm(filepath, metadata=None):
     try:
         url = "{SAMVMURL}/upload"
@@ -135,102 +181,389 @@ def upload_to_vm(filepath, metadata=None):
     except Exception as e:
         print(f"Upload to VM failed: {str(e)}")
         return None
-    
-
-@app.route('/generate_3d_direct', methods=['POST'])
-def generate_3d_direct():
+def save_base64_image(b64_data, folder, base_filename):
+    """
+    Decodes a base64 string and saves it as a PNG image in the specified folder.
+    """
     try:
-        data = request.json
-        image_url = data['image_url']
-        mask_data = data['mask_data']  # This is the actual mask data
-
-        # Extract filename from URL
-        image_filename = os.path.basename(image_url)
-        image_path = os.path.join('generated_images', image_filename)
+        # 1. Ensure the target directory exists
+        os.makedirs(folder, exist_ok=True)
         
-        # Verify image exists
-        if not os.path.exists(image_path):
-            return jsonify({'error': 'Image file not found'}), 404
+        # 2. Strip the data URL prefix if it exists
+        if 'base64,' in b64_data:
+            b64_data = b64_data.split(',', 1)[1]
         
-        # Load original image
-        with open(image_path, 'rb') as f:
-            original_image = Image.open(f).convert('RGBA')
+        # 3. Decode the base64 string
+        image_bytes = base64.b64decode(b64_data)
         
-        # Decode mask (base64 string)
-        if ',' in mask_data:
-            mask_data = mask_data.split(',')[-1]
-            
-        mask_bytes = base64.b64decode(mask_data)
-        mask_image = Image.open(BytesIO(mask_bytes)).convert('L')
+        # 4. Use PIL to open the bytes and save as a proper PNG
+        image = Image.open(BytesIO(image_bytes))
         
-        # Ensure mask matches image size
-        if mask_image.size != original_image.size:
-            mask_image = mask_image.resize(original_image.size, Image.LANCZOS)
+        # 5. Create a unique filename
+        filename = f"{base_filename}_{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
+        save_path = os.path.join(folder, filename)
         
-        # Create isolated image with only the masked area
-        isolated_image = Image.new('RGBA', original_image.size, (0, 0, 0, 0))
-        isolated_image.paste(original_image, (0, 0), mask_image)
-        
-        # Crop to bounding box of the non-transparent pixels
-        bbox = isolated_image.getbbox()
-        if not bbox:
-            return jsonify({'error': 'No object found in mask'}), 400
-            
-        cropped = isolated_image.crop(bbox)
-        
-        # Resize to 256x256 while maintaining aspect ratio
-        width, height = cropped.size
-        scale = min(256/width, 256/height)
-        new_width = int(width * scale)
-        new_height = int(height * scale)
-        
-        resized = cropped.resize((new_width, new_height), Image.LANCZOS)
-        
-        # Create 256x256 canvas with transparent background
-        final_image = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
-        
-        # Center the resized image
-        x = (256 - new_width) // 2
-        y = (256 - new_height) // 2
-        final_image.paste(resized, (x, y))
-        
-
-        final_image.save('debuggg.png')
-        # Convert to base64
-        buffer = BytesIO()
-        final_image.save(buffer, format='PNG', optimize=True)
-        final_image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
-        # Send to 3D server
-        print(f"Sending cropped image to {VM_3D_SERVER_URL}/process")
-        
-        response = requests.post(
-            f"{VM_3D_SERVER_URL}/process",  
-            json={"image": f"data:image/png;base64,{final_image_base64}"},
-            timeout=300
-        )
-        
-        # Save the returned PLY data locally
-        if response.status_code == 200:
-            ply_data = response.json().get('ply_data')
-            if ply_data:
-                os.makedirs('3d_models', exist_ok=True)
-                filename = f"3d_model_{int(time.time())}.ply"
-                filepath = os.path.join('3d_models', filename)
-                
-                with open(filepath, 'wb') as f:
-                    f.write(base64.b64decode(ply_data))
-
-        if response.status_code != 200:
-            return jsonify({
-                'error': '3D generation failed',
-                'details': response.text
-            }), 500
-        
-        return jsonify(response.json())
+        # 6. Save the image
+        image.save(save_path, format="PNG")
+        app.logger.info(f"Successfully saved image to {save_path}")
+        return save_path
         
     except Exception as e:
+        # Log an error if saving fails, but don't stop the request
+        app.logger.error(f"Failed to save base64 image to {folder}: {e}")
+        return None
+
+def prepare_3d_input(image_url, mask_data):
+    #Prepares the cropped and centered image for 3D generation.#
+    # Extract filename from URL
+    image_filename = os.path.basename(image_url)
+    image_path = os.path.join('generated_images', image_filename)
+    
+    # Verify image exists
+    if not os.path.exists(image_path):
+        raise FileNotFoundError('Image file not found for 3D prep')
+    
+    # Load original image
+    with open(image_path, 'rb') as f:
+        original_image = Image.open(f).convert('RGBA')
+    
+    # Decode mask (base64 string)
+    if ',' in mask_data:
+        mask_data = mask_data.split(',')[-1]
+        
+    mask_bytes = base64.b64decode(mask_data)
+    mask_image = Image.open(BytesIO(mask_bytes)).convert('L')
+    
+    # Ensure mask matches image size
+    if mask_image.size != original_image.size:
+        mask_image = mask_image.resize(original_image.size, Image.LANCZOS)
+    
+    # Create isolated image with only the masked area
+    isolated_image = Image.new('RGBA', original_image.size, (0, 0, 0, 0))
+    isolated_image.paste(original_image, (0, 0), mask_image)
+    
+    # Crop to bounding box of the non-transparent pixels
+    bbox = isolated_image.getbbox()
+    if not bbox:
+        raise ValueError('No object found in mask for 3D prep')
+        
+    cropped = isolated_image.crop(bbox)
+    
+    # Resize to 256x256 while maintaining aspect ratio
+    width, height = cropped.size
+    scale = min(256/width, 256/height)
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+    
+    resized = cropped.resize((new_width, new_height), Image.LANCZOS)
+    
+    # Create 256x256 canvas with transparent background
+    final_image = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+    
+    # Center the resized image
+    x = (256 - new_width) // 2
+    y = (256 - new_height) // 2
+    final_image.paste(resized, (x, y))
+
+    final_image.save('debuggg.png')
+
+    # Convert to base64
+    buffer = BytesIO()
+    final_image.save(buffer, format='PNG', optimize=True)
+    final_image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+    
+    return f"data:image/png;base64,{final_image_base64}"
+
+
+@app.route('/transform_to_3d_alive', methods=['POST'])
+def transform_to_3d_alive():
+    """
+    Orchestrates the synchronous inpainting (LaMa) and 3D generation.
+    Returns the inpainted image (Image B) and the 3D model (3D_Cat) together.
+    Returns: inpainted_image, ply_data, detailed_prompt
+    """
+    try:
+        #we get the the the original image plus the mask and the simple prompt 
+        data = request.json
+        image_url = data['image_url']
+        mask_data = data['mask_data']
+        simple_prompt = data.get('simple_prompt', 'the object')
+
+        # Retrieve and Encode Original Image
+        image_filename = os.path.basename(image_url)
+        image_path = os.path.join('generated_images', image_filename)
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found for transformation'}), 404
+
+        # Read the original image file and convert to Base64 for the LaMa API call
+        with open(image_path, 'rb') as f:
+            original_image_base64 = base64.b64encode(f.read()).decode('utf-8')
+
+        #  PROCESS AND DILATE THE MASK
+        
+        
+        if 'base64,' in mask_data:
+            mask_header, mask_b64 = mask_data.split(',', 1)
+        else:
+            mask_header = 'data:image/png;base64'
+            mask_b64 = mask_data
+
+        mask_bytes = base64.b64decode(mask_b64)
+       
+        np_arr = np.frombuffer(mask_bytes, np.uint8)
+        mask_image_cv = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
+
+        if len(mask_image_cv.shape) > 2 and mask_image_cv.shape[2] == 4:
+            mask_gray = mask_image_cv[:, :, 3]
+        elif len(mask_image_cv.shape) > 2:
+        
+            mask_gray = cv2.cvtColor(mask_image_cv, cv2.COLOR_BGR2GRAY)
+        else:
+            mask_gray = mask_image_cv
+
+        _, binary_mask = cv2.threshold(mask_gray, 1, 255, cv2.THRESH_BINARY)
+        # Define a 15x15 kernel (the structure used to enlarge the mask)
+        kernel = np.ones((15, 15), np.uint8)
+        dilated_mask = cv2.dilate(binary_mask, kernel, iterations=1)
+        
+        _, buffer = cv2.imencode('.png', dilated_mask)
+        refined_mask_b64 = base64.b64encode(buffer).decode('utf-8')
+        refined_mask_data_url = f"{mask_header},{refined_mask_b64}"
+      
+        # 3. CALL LAMA INPAINTING SERVICE
+        print(f"Starting Inpainting on {VM_LAMA_SERVER_URL}/inpaint")
+        lama_response = requests.post(
+            f"{VM_LAMA_SERVER_URL}/inpaint",
+            json={
+                # Send the original image and the newly dilated mask
+                "image": f"data:image/png;base64,{original_image_base64}",
+                "mask": refined_mask_data_url,
+            },
+            timeout=300 
+        )
+
+        # Handle LaMa API errors
+        if lama_response.status_code != 200:
+            return jsonify({
+                'error': 'LaMa inpainting failed',
+                'details': lama_response.text
+            }), 500
+
+        # Extract the Base64 inpainted image from the LaMa response
+        inpainted_image_data = lama_response.json().get('inpainted_image')
+
+        # inpainted_image_data = None
+
+
+        final_image_base64_data_url = prepare_3d_input(image_url, mask_data)
+
+        print(f"Starting 3D generation on {VM_3D_SERVER_URL}/process")
+        infer_response = requests.post(
+            f"{VM_3D_SERVER_URL}/process",
+            json={"image": final_image_base64_data_url},
+            timeout=300 
+        )
+
+        # Handle 3D generation API errors
+        if infer_response.status_code != 200:
+            return jsonify({
+                'error': '3D generation failed',
+                'details': infer_response.text
+            }), 500
+
+        # Extract the 3D model data  PLY file
+        ply_data = infer_response.json().get('ply_data')
+
+
+        
+        if ply_data:
+            try:
+                # Define a directory to save your PLY files
+                save_dir = 'generated_plys'
+                os.makedirs(save_dir, exist_ok=True)
+                
+                # Create a unique filename
+                filename = f"model_{int(time.time())}.ply"
+                save_path = os.path.join(save_dir, filename)
+
+                # Decode the Base64 data
+                # Handle if it has a data URL prefix
+                if 'base64,' in ply_data:
+                    _, ply_b64_data = ply_data.split(',', 1)
+                else:
+                    ply_b64_data = ply_data # Assume it's raw Base64
+
+                ply_bytes = base64.b64decode(ply_b64_data)
+                
+                # Write the bytes to a file
+                with open(save_path, 'wb') as f:
+                    f.write(ply_bytes)
+                app.logger.info(f"Successfully saved 3D model to {save_path}")
+
+            except Exception as save_e:
+                # Log an error if saving fails, but don't stop the request
+                app.logger.error(f"Failed to save PLY file: {save_e}")
+        
+        
+        # In this part we are goin to use google geimini to create a better prompt 
+        
+        print("Starting detailed prompt generation with Gemini")
+        detailed_prompt = "" 
+        try:
+            # Create the "meta-prompt" for the LLM
+            meta_prompt = f"""
+            Analyze the object in this image. The user's simple prompt is "{simple_prompt}".
+            Generate a new, highly detailed prompt for an image generation model. 
+            This new prompt should describe the object's key visual features like 
+            colors, clothing, shape, texture, and style.
+            Only output the new, detailed prompt. Do not add any conversational text.
+            """
+            if 'base64,' in final_image_base64_data_url:
+                 image_b64_data = final_image_base64_data_url.split(',', 1)[1] # <-- CORRECTED
+            else:
+                 image_b64_data = final_image_base64_data_url # <-- CORRECTED
+            
+            # 2. Decode the base64 string back into bytes
+            image_bytes = base64.b64decode(image_b64_data)
+            # Call the text-only Gemini helper
+            detailed_prompt = get_description_from_gemini(
+                prompt=meta_prompt,
+                image_bytes=image_bytes,
+                mime_type="image/png"
+            ).strip()
+            try:
+                save_text_file(
+                    detailed_prompt, 
+                    "detailed_prompts", 
+                    "latest_detailed_prompt" # Use the base filename
+                )
+            except Exception as save_e:
+                app.logger.error(f"Failed to save detailed prompt: {save_e}")
+            
+        except Exception as gemini_e:
+            app.logger.error(f"Gemini prompt generation failed: {gemini_e}")
+            detailed_prompt = f"Failed to generate prompt: {gemini_e}"
+        
+        
+        
+
+        
+        
+        # 5. Synchronize and Return Both Results
+        return jsonify({
+            'status': 'success',
+            'inpainted_image': inpainted_image_data,
+            'ply_data': ply_data,
+            'detailed_prompt': detailed_prompt
+        })
+
+    except Exception as e:
+        # Catch and log any unexpected server-side errors
+        app.logger.error(f"Error in transform_to_3d_alive: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+def save_text_file(text_content, folder, base_filename):
+    """
+    Saves text content to a file, overwriting the previous one.
+    """
+    try:
+        os.makedirs(folder, exist_ok=True)
+        # Create a static filename (e.g., "latest_prompt.txt")
+        filename = f"{base_filename}.txt"
+        save_path = os.path.join(folder, filename)
+        
+        with open(save_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+            
+        app.logger.info(f"Successfully saved/overwrote text file: {save_path}")
+        return save_path
+        
+    except Exception as e:
+        app.logger.error(f"Failed to save text file to {folder}: {e}")
+        return None
+
+# In your main image_generator.py (port 5000)
+
+@app.route('/rerender_with_canny', methods=['POST'])
+def rerender_with_canny():
+    try:
+        data = request.json
+        image_base64 = data.get('image_base64')
+        prompt = data.get('prompt')
+
+        if not image_base64:
+            return jsonify({'error': 'No image data provided from frontend'}), 400
+
+        # --- NEW: SAVE THE INPUT IMAGE LOCALLY FIRST ---
+        try:
+            # Use the helper function we already have!
+            save_base64_image(image_base64, "canny_inputs", "canny_input")
+            app.logger.info("Saved Canny input image locally.")
+        except Exception as e:
+            # Log an error if saving fails, but don't stop the request
+            app.logger.error(f"Failed to save Canny input image: {e}")
+        # --- END NEW SAVING LOGIC ---
+
+        # The rest of the function continues as normal
+        
+        # Strip prefix for the VM (our helper function handles this for saving)
+        image_base64_for_vm = image_base64
+        if 'base64,' in image_base64:
+            app.logger.info("Found data URL prefix, stripping it for VM...")
+            image_base64_for_vm = image_base64.split(',', 1)[1]
+
+        vm_url = f"{VM_CANNY_SERVER_URL}/rerender_with_canny" 
+        app.logger.info(f"Forwarding rerender request to {vm_url}...")
+
+        response = requests.post(
+            vm_url,
+            json={
+                "image_base64": image_base64_for_vm,
+                "prompt": prompt
+            },
+            timeout=300 
+        )
+
+        if response.status_code != 200:
+            app.logger.error(f"Canny VM failed. Status: {response.status_code}, Details: {response.text}")
+            return jsonify({
+                'error': 'Canny VM processing failed',
+                'details': response.text
+            }), 500
+
+        app.logger.info("Successfully got response from Canny VM.")
+        
+        # --- (This is the existing saving logic for outputs) ---
+        vm_response_data = response.json()
+
+        # Goal 1: Save the Canny edge image
+        try:
+            canny_b64 = vm_response_data.get('debug_canny_url')
+            if canny_b64:
+                save_base64_image(canny_b64, "cannyed", "canny_edge")
+            else:
+                app.logger.warning("No 'debug_canny_url' key found in VM response to save.")
+        except Exception as e:
+            app.logger.error(f"Error processing/saving canny edge: {e}")
+
+        # Goal 2: Save the "three refined images"
+        try:
+            refined_images_list = vm_response_data.get('image_options')
+            if isinstance(refined_images_list, list):
+                app.logger.info(f"Found {len(refined_images_list)} refined images to save.")
+                for i, img_b64 in enumerate(refined_images_list):
+                    save_base64_image(img_b64, "refined_images", f"refined_image_{i}")
+            else:
+                app.logger.warning("No 'image_options' key (or it's not a list) found in VM response.")
+        except Exception as e:
+            app.logger.error(f"Error processing/saving refined images: {e}")
+        # --- (End of existing saving logic) ---
+
+        return jsonify(vm_response_data)
+
+    except Exception as e:
+        app.logger.error(f"Error in /rerender_with_canny proxy: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
     
 #SAM Endpoint
 @app.route('/segment_with_sam', methods=['POST'])
@@ -271,42 +604,46 @@ def segment_with_sam():
 
 @app.route('/gemini', methods=['POST'])
 def gemini_iterate():
-    data = request.json or {}
-    prompt = data.get('prompt')
-    image_filename = data.get('image_filename')  
-    model = data.get('model', "gemini-2.0-flash-preview-image-generation")
-    
-    try:
-        result = call_gemini(prompt, image_filename, model)
+        data = request.json or {}
+        prompt = data.get('prompt')
+        image_filename = data.get('image_filename')
+        model = data.get('model', "gemini-2.0-flash-001")
+
+
+        try:
+            result = call_gemini(prompt, image_filename, model)
+
+
+            timestamp = int(time.time())
+            safe_prompt = "".join(c for c in prompt if c.isalnum() or c in (' ', '_')).rstrip()
+            safe_prompt = safe_prompt[:50].replace(" ", "_")
+            new_filename = f"{safe_prompt}__{timestamp}_{uuid.uuid4().hex[:4]}.png"
+            new_path = os.path.join("generated_images", new_filename)
+
+
+            with open(new_path, 'wb') as f:
+                f.write(result['image_bytes'])
+
+
+            response_data = {
+                'id': str(uuid.uuid4()),
+                'filename': new_filename,
+                'url': f"/generated_images/{new_filename}",
+                'prompt': prompt,
+                'description': result.get('text_response', ''),
+                'timestamp': timestamp * 1000,
+                'model': model
+            }
+
+
+            socketio.emit('new_image', response_data)
+            return jsonify(response_data)
+
+
+        except Exception as e:
+            app.logger.error(f"Error in gemini_iterate: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
         
-        # Generate consistent filename format
-        timestamp = int(time.time())
-        safe_prompt = "".join(c for c in prompt if c.isalnum() or c in (' ', '_')).rstrip()
-        safe_prompt = safe_prompt[:50].replace(" ", "_")  
-        new_filename = f"{safe_prompt}__{timestamp}_{uuid.uuid4().hex[:4]}.png"
-        new_path = os.path.join("generated_images", new_filename)
-        
-        # Save new image
-        with open(new_path, 'wb') as f:
-            f.write(result['image_bytes'])
-        
-        response_data = {
-            'id': str(uuid.uuid4()),
-            'filename': new_filename,
-            'url': f"/generated_images/{new_filename}",
-            'prompt': prompt,
-            'description': result.get('text_response', ''),
-            'timestamp': timestamp * 1000,
-            'model': model
-        }
-        
-        socketio.emit('new_image', response_data)
-        return jsonify(response_data)
-        
-    except Exception as e:
-        app.logger.error(f"Error in gemini_iterate: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
-    
 
 
 def call_google_imagen_api(prompt, model_id="imagen-4.0-generate-preview-06-06"):

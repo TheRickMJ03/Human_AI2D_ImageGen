@@ -51,11 +51,22 @@ const [prompt, setPrompt] = useState('');
 
     setPrompt('');
   };
+  const handleRerenderComplete = (newImageUrl, originalPrompt) => {
+    // const newMessage = {
+    //   role: 'assistant',
+    //   type: 'image',
+    //   content: newImageUrl, 
+    //   prompt: `Re-rendered scene based on: "${originalPrompt}"`,
+    //   timestamp: new Date().toISOString()
+    // };
+    
+    // setMessages(prevMessages => [...prevMessages, newMessage]);
+  };
 
    return (
     <div className="chat-container">
       <div className="chat-history-container" ref={chatHistoryRef}>
-        <ChatHistory messages={messages} />
+        <ChatHistory messages={messages} onRerenderComplete={handleRerenderComplete}/>
         {isGenerating && (
           <div className="generating-indicator">
             Generating image...

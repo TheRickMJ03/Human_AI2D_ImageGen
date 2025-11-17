@@ -3,7 +3,7 @@ import './ChatHistory.css';
 import TextMessage from "./TextMessage";
 import ImageMessage from "./ImageMessage";
 
-const ChatHistory = ({ messages }) => {
+const ChatHistory = ({ messages,onRerenderComplete}) => {
   const chatEndRef = useRef(null);
   const [segmentationData, setSegmentationData] = useState({
     imageUrl: null,
@@ -153,6 +153,7 @@ const ChatHistory = ({ messages }) => {
             setSegmentationData={setSegmentationData}
             loading={loading}
             error={error}
+            onRerenderComplete={onRerenderComplete}
             handleImageClick={handleImageClick}
             clearSegmentation={clearSegmentation}
             setError={setError}
