@@ -25,6 +25,10 @@ env/
 /server/generated_images/
 /server/segmented_images/
 /server/generated_plys
+/server/refined_images
+/server/detailed_prompts
+/server/canny_inputs
+/server/cannyed
 # === Environment Variables & Secrets ===
 .env
 .env.*

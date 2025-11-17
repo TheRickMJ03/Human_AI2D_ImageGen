@@ -181,7 +181,38 @@ def upload_to_vm(filepath, metadata=None):
     except Exception as e:
         print(f"Upload to VM failed: {str(e)}")
         return None
+def save_base64_image(b64_data, folder, base_filename):
+    """
+    Decodes a base64 string and saves it as a PNG image in the specified folder.
+    """
+    try:
+        # 1. Ensure the target directory exists
+        os.makedirs(folder, exist_ok=True)
         
+        # 2. Strip the data URL prefix if it exists
+        if 'base64,' in b64_data:
+            b64_data = b64_data.split(',', 1)[1]
+        
+        # 3. Decode the base64 string
+        image_bytes = base64.b64decode(b64_data)
+        
+        # 4. Use PIL to open the bytes and save as a proper PNG
+        image = Image.open(BytesIO(image_bytes))
+        
+        # 5. Create a unique filename
+        filename = f"{base_filename}_{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
+        save_path = os.path.join(folder, filename)
+        
+        # 6. Save the image
+        image.save(save_path, format="PNG")
+        app.logger.info(f"Successfully saved image to {save_path}")
+        return save_path
+        
+    except Exception as e:
+        # Log an error if saving fails, but don't stop the request
+        app.logger.error(f"Failed to save base64 image to {folder}: {e}")
+        return None
+
 def prepare_3d_input(image_url, mask_data):
     #Prepares the cropped and centered image for 3D generation.#
     # Extract filename from URL
@@ -268,7 +299,7 @@ def transform_to_3d_alive():
         with open(image_path, 'rb') as f:
             original_image_base64 = base64.b64encode(f.read()).decode('utf-8')
 
-        # 2. PROCESS AND DILATE THE MASK
+        #  PROCESS AND DILATE THE MASK
         
         
         if 'base64,' in mask_data:
@@ -278,12 +309,7 @@ def transform_to_3d_alive():
             mask_b64 = mask_data
 
         mask_bytes = base64.b64decode(mask_b64)
-        """
-                Here is where the whole mask dilation starts
-        
-        
-        
-        """
+       
         np_arr = np.frombuffer(mask_bytes, np.uint8)
         mask_image_cv = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
 
@@ -303,13 +329,7 @@ def transform_to_3d_alive():
         _, buffer = cv2.imencode('.png', dilated_mask)
         refined_mask_b64 = base64.b64encode(buffer).decode('utf-8')
         refined_mask_data_url = f"{mask_header},{refined_mask_b64}"
-        """
-            Here is where the whole process finishes 
-        """
-
-
-
-
+      
         # 3. CALL LAMA INPAINTING SERVICE
         print(f"Starting Inpainting on {VM_LAMA_SERVER_URL}/inpaint")
         lama_response = requests.post(
@@ -319,7 +339,7 @@ def transform_to_3d_alive():
                 "image": f"data:image/png;base64,{original_image_base64}",
                 "mask": refined_mask_data_url,
             },
-            timeout=300 # Set a long timeout for the potentially slow inpainting process
+            timeout=300 
         )
 
         # Handle LaMa API errors
@@ -411,6 +431,14 @@ def transform_to_3d_alive():
                 image_bytes=image_bytes,
                 mime_type="image/png"
             ).strip()
+            try:
+                save_text_file(
+                    detailed_prompt, 
+                    "detailed_prompts", 
+                    "latest_detailed_prompt" # Use the base filename
+                )
+            except Exception as save_e:
+                app.logger.error(f"Failed to save detailed prompt: {save_e}")
             
         except Exception as gemini_e:
             app.logger.error(f"Gemini prompt generation failed: {gemini_e}")
@@ -425,7 +453,7 @@ def transform_to_3d_alive():
         return jsonify({
             'status': 'success',
             'inpainted_image': inpainted_image_data,
-            'ply_data': ply_data,# Returns the 3D model data
+            'ply_data': ply_data,
             'detailed_prompt': detailed_prompt
         })
 
@@ -433,8 +461,27 @@ def transform_to_3d_alive():
         # Catch and log any unexpected server-side errors
         app.logger.error(f"Error in transform_to_3d_alive: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+def save_text_file(text_content, folder, base_filename):
+    """
+    Saves text content to a file, overwriting the previous one.
+    """
+    try:
+        os.makedirs(folder, exist_ok=True)
+        # Create a static filename (e.g., "latest_prompt.txt")
+        filename = f"{base_filename}.txt"
+        save_path = os.path.join(folder, filename)
+        
+        with open(save_path, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+            
+        app.logger.info(f"Successfully saved/overwrote text file: {save_path}")
+        return save_path
+        
+    except Exception as e:
+        app.logger.error(f"Failed to save text file to {folder}: {e}")
+        return None
 
-
+# In your main image_generator.py (port 5000)
 
 @app.route('/rerender_with_canny', methods=['POST'])
 def rerender_with_canny():
@@ -446,10 +493,23 @@ def rerender_with_canny():
         if not image_base64:
             return jsonify({'error': 'No image data provided from frontend'}), 400
 
+        # --- NEW: SAVE THE INPUT IMAGE LOCALLY FIRST ---
+        try:
+            # Use the helper function we already have!
+            save_base64_image(image_base64, "canny_inputs", "canny_input")
+            app.logger.info("Saved Canny input image locally.")
+        except Exception as e:
+            # Log an error if saving fails, but don't stop the request
+            app.logger.error(f"Failed to save Canny input image: {e}")
+        # --- END NEW SAVING LOGIC ---
 
+        # The rest of the function continues as normal
+        
+        # Strip prefix for the VM (our helper function handles this for saving)
+        image_base64_for_vm = image_base64
         if 'base64,' in image_base64:
-            app.logger.info("Found data URL prefix, stripping it...")
-            image_base64 = image_base64.split(',', 1)[1]
+            app.logger.info("Found data URL prefix, stripping it for VM...")
+            image_base64_for_vm = image_base64.split(',', 1)[1]
 
         vm_url = f"{VM_CANNY_SERVER_URL}/rerender_with_canny" 
         app.logger.info(f"Forwarding rerender request to {vm_url}...")
@@ -457,7 +517,7 @@ def rerender_with_canny():
         response = requests.post(
             vm_url,
             json={
-                "image_base64": image_base64,
+                "image_base64": image_base64_for_vm,
                 "prompt": prompt
             },
             timeout=300 
@@ -470,14 +530,39 @@ def rerender_with_canny():
                 'details': response.text
             }), 500
 
+        app.logger.info("Successfully got response from Canny VM.")
+        
+        # --- (This is the existing saving logic for outputs) ---
+        vm_response_data = response.json()
 
-        app.logger.info("Successfully got rerendered image from Canny VM.")
-        return jsonify(response.json())
+        # Goal 1: Save the Canny edge image
+        try:
+            canny_b64 = vm_response_data.get('debug_canny_url')
+            if canny_b64:
+                save_base64_image(canny_b64, "cannyed", "canny_edge")
+            else:
+                app.logger.warning("No 'debug_canny_url' key found in VM response to save.")
+        except Exception as e:
+            app.logger.error(f"Error processing/saving canny edge: {e}")
+
+        # Goal 2: Save the "three refined images"
+        try:
+            refined_images_list = vm_response_data.get('image_options')
+            if isinstance(refined_images_list, list):
+                app.logger.info(f"Found {len(refined_images_list)} refined images to save.")
+                for i, img_b64 in enumerate(refined_images_list):
+                    save_base64_image(img_b64, "refined_images", f"refined_image_{i}")
+            else:
+                app.logger.warning("No 'image_options' key (or it's not a list) found in VM response.")
+        except Exception as e:
+            app.logger.error(f"Error processing/saving refined images: {e}")
+        # --- (End of existing saving logic) ---
+
+        return jsonify(vm_response_data)
 
     except Exception as e:
         app.logger.error(f"Error in /rerender_with_canny proxy: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-
 
     
 #SAM Endpoint

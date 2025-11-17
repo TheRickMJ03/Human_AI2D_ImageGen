@@ -1,10 +1,8 @@
-/* Visual feedback during interaction */
 .image-message.segmenting img {
   outline: 2px solid #72869c;
   outline-offset: 2px;
 }
 
-/* Image Message Container */
 .image-message {
   max-width: 100%;
   position: relative;
@@ -91,7 +89,105 @@
 }
 
 
+.rerender-selection-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.85);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  box-sizing: border-box;
+  border-radius: 8px;
+}
 
+.rerender-selection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0 10px 10px 10px;
+  box-sizing: border-box;
+}
+
+.rerender-selection-header p {
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.reroll-btn {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  background-color: #555;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.reroll-btn:hover:not(:disabled) {
+  background-color: #666;
+}
+
+.reroll-btn:disabled {
+  background-color: #444;
+  cursor: not-allowed;
+}
+
+
+.rerender-options-container {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: calc(100% - 40px); 
+}
+
+.rerender-option-image {
+  width: 30%; 
+  height: auto;
+  max-height: 90%;
+  object-fit: contain;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.rerender-option-image:hover {
+  transform: scale(1.05);
+  border-color: #c300ff;
+}
+
+
+.rerendering-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgb(0, 0, 0);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 15; 
+  border-radius: 8px;
+}
+
+.rerendering-text {
+  color: white;
+  font-size: 1.1em;
+  font-weight: bold;
+}
 
 
 .generating-3d-overlay {

@@ -21,7 +21,12 @@ const ImageMessage = ({
   const [show3DViewer, setShow3DViewer] = useState(false);
   const [inpaintedImage, setInpaintedImage] = useState(null); 
   const [detailedPrompt, setDetailedPrompt] = useState(null);
+  
   const [rerenderedImage, setRerenderedImage] = useState(null); 
+  const [rerenderOptions, setRerenderOptions] = useState([]);   
+  
+  const [cachedBase64, setCachedBase64] = useState(null);
+  const [cachedPrompt, setCachedPrompt] = useState(null);
 
   const imageContainerRef = useRef(null); 
   const threeDContainerRef = useRef(null);
@@ -31,7 +36,6 @@ const ImageMessage = ({
   const resetViewRef = useRef(null);
 
   useEffect(() => {
-    // This effect clears state when the segmentation target changes
     if (!segmentationData.imageUrl || segmentationData.imageUrl !== msg.content) {
       setThreeDModel(null);
       setShow3DViewer(false);
@@ -41,6 +45,10 @@ const ImageMessage = ({
       setRerenderError(null);
       setDetailedPrompt(null);
       setRerenderedImage(null); 
+      setRerenderOptions([]);
+      
+      setCachedBase64(null);
+      setCachedPrompt(null);
     }
   }, [segmentationData.imageUrl, msg.content]); 
 
@@ -106,25 +114,42 @@ const ImageMessage = ({
 
 
   const handleRerender = async () => {
-    if (!threeDContainerRef.current) {
-      setRerenderError("3D viewer container not found.");
-      return;
-    }
-    
     setIsRerendering(true);
     setRerenderError(null);
-    
+    setRerenderOptions([]); 
+
     try {
-      const canvas = await html2canvas(threeDContainerRef.current, {
-        useCORS: true, 
-        allowTaint: true,
-        backgroundColor: null, 
-        preserveDrawingBuffer: true, 
-      });
-      const imageBase64 = canvas.toDataURL('image/png');
+      let imageBase64;
+      let promptToSend;
+
+      if (cachedBase64 && cachedPrompt) {
+        console.log("Using cached image and prompt for rerender.");
+        imageBase64 = cachedBase64;
+        promptToSend = cachedPrompt;
+      } else {
+        console.log("Capturing new image and prompt for rerender.");
+        if (!threeDContainerRef.current) {
+          throw new Error("3D viewer container not found.");
+        }
+        
+        const canvas = await html2canvas(threeDContainerRef.current, {
+          useCORS: true, 
+          allowTaint: true,
+          backgroundColor: null, 
+          preserveDrawingBuffer: true, 
+        });
+        
+        imageBase64 = canvas.toDataURL('image/png');
+        promptToSend = detailedPrompt || msg.prompt || "a new version of this";
+
+        setCachedBase64(imageBase64);
+        setCachedPrompt(promptToSend);
+        
+        setShow3DViewer(false); 
+      }
       
-      const promptToSend = detailedPrompt || msg.prompt || "a new version of this";
       console.log("Sending this prompt to rerender:", promptToSend);
+      
       const response = await fetch('http://localhost:5000/rerender_with_canny', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -139,25 +164,35 @@ const ImageMessage = ({
         throw new Error(data.error);
       }
 
-      const newImageUrl =  data.new_image_url 
-      setRerenderedImage(newImageUrl);
-      setShow3DViewer(false);
-
-      if (onRerenderComplete) {
-        onRerenderComplete(data.new_image_url, msg.prompt); 
+      if (data.image_options && data.image_options.length > 0) {
+        setRerenderOptions(data.image_options);
+        setRerenderedImage(null); 
+      } else {
+        throw new Error("No image options received from server.");
       }
       
-
     } catch (err) {
       console.error("Rerender failed:", err);
       setRerenderError(err.message || "Failed to rerender.");
+      setRerenderOptions([]); 
     } finally {
-      setIsRerendering(false);
+      setIsRerendering(false); 
     }
   };
 
+
+  const handleOptionSelect = (selectedImageUrl) => {
+    setRerenderedImage(selectedImageUrl); 
+    setRerenderOptions([]); 
+    
+    if (onRerenderComplete) {
+      onRerenderComplete(selectedImageUrl, msg.prompt); 
+    }
+  };
+
+
   const getCurrentImageSource = () => {
-    if (inpaintedImage && (show3DViewer || rerenderedImage)) {
+    if (inpaintedImage && (show3DViewer || rerenderedImage || rerenderOptions.length > 0)) {
       return inpaintedImage;
     }
     if (msg.content.startsWith('data:image')) {
@@ -169,6 +204,8 @@ const ImageMessage = ({
     }`;
   };
 
+  const isClickable = !show3DViewer && !rerenderedImage && rerenderOptions.length === 0;
+
   return (
     <div className="image-message">
       <div className="image-container" ref={imageContainerRef}>
@@ -176,8 +213,8 @@ const ImageMessage = ({
           src={getCurrentImageSource()}
           alt={msg.prompt || "Generated"} 
           crossOrigin="anonymous"
-          onClick={!show3DViewer && !rerenderedImage ? (e) => handleImageClick(e, msg.content) : undefined}
-          style={show3DViewer || rerenderedImage ? { cursor: 'default' } : {}}
+          onClick={isClickable ? (e) => handleImageClick(e, msg.content) : undefined}
+          style={isClickable ? {} : { cursor: 'default' }}
           onLoad={!show3DViewer ? (e) => {
             const img = e.target;
             const rect = img.getBoundingClientRect();
@@ -191,7 +228,7 @@ const ImageMessage = ({
           } : undefined}
         />
         
-      {rerenderedImage && (
+      {rerenderedImage && !show3DViewer && rerenderOptions.length === 0 && (
        <img
           src={rerenderedImage}
           alt="Refined result" 
@@ -208,6 +245,7 @@ const ImageMessage = ({
         />
       )}
 
+      {/* 3D Viewer */}
       <div className="three-d-wrapper" ref={threeDContainerRef}style={{
           position: "absolute", 
           top: 0,
@@ -237,7 +275,8 @@ const ImageMessage = ({
           />
         )}
         </div>
-          {segmentationData.imageUrl === msg.content && !show3DViewer && !rerenderedImage && (
+          
+        {segmentationData.imageUrl === msg.content && !show3DViewer && !rerenderedImage && rerenderOptions.length === 0 && (
             <SegmentationOverlay
               msg={msg}
               segmentationData={segmentationData}
@@ -245,18 +284,50 @@ const ImageMessage = ({
               loading={loading}
               show3DViewer={show3DViewer}
             />
-          )}
-
+        )}
+        
         {isGenerating3D && segmentationData.imageUrl === msg.content && (
           <div className="generating-3d-overlay">
             <div className="generating-3d-text">Generating 3D model...</div>
           </div>
         )}
 
-   
+        {isRerendering && rerenderOptions.length === 0 && (
+          <div className="rerendering-overlay">
+            <div className="rerendering-text">Refining image...</div>
+          </div>
+        )}
+
+        {/* Image Selection*/}
+        {rerenderOptions.length > 0 && (
+          <div className="rerender-selection-overlay">
+            <div className="rerender-selection-header">
+              <p>Select your preferred image</p>
+              <button
+                className="reroll-btn"
+                onClick={handleRerender}
+                disabled={isRerendering} 
+              >
+                {isRerendering ? "..." : "Try Again"}
+              </button>
+            </div>
+            <div className="rerender-options-container">
+              {rerenderOptions.map((imgSrc, index) => (
+                <img
+                  key={index}
+                  src={imgSrc}
+                  alt={`Option ${index + 1}`}
+                  className="rerender-option-image"
+                  onClick={() => handleOptionSelect(imgSrc)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
       </div>
 
-      {segmentationData.imageUrl === msg.content && !rerenderedImage && (
+      {segmentationData.imageUrl === msg.content && !rerenderedImage && rerenderOptions.length === 0 && (
         <SegmentationControls
           segmentationData={segmentationData}
           generate3DModel={generate3DModel}
