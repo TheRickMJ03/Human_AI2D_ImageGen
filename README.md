@@ -30,7 +30,11 @@ This application serves as the functional prototype for this research, integrati
 
 ## Demo
 
-![demo_2](https://github.com/user-attachments/assets/bf8264d8-bb93-4596-9ecc-17790f2eb6c6)
+
+
+https://github.com/user-attachments/assets/b31c7dd6-0a01-4132-b562-0059ba746d54
+
+
 
 ---
 
